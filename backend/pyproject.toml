@@ -16,6 +16,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["migrations/versions"]
 
 [dependency-groups]
 dev = [
