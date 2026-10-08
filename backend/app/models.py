@@ -28,9 +28,7 @@ def enum_column(enum_cls):
 
 
 class CreatedAtMixin:
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Company(CreatedAtMixin, Base):
@@ -75,9 +73,7 @@ class Application(CreatedAtMixin, Base):
     salary_max: Mapped[int | None]
     job_url: Mapped[str | None] = mapped_column(String(1000))
     source: Mapped[Source] = mapped_column(enum_column(Source))
-    skills: Mapped[list[str]] = mapped_column(
-        ARRAY(String(50)), default=list, server_default="{}"
-    )
+    skills: Mapped[list[str]] = mapped_column(ARRAY(String(50)), default=list, server_default="{}")
     status: Mapped[Status] = mapped_column(
         enum_column(Status), default=Status.SAVED, server_default=Status.SAVED.value, index=True
     )
@@ -106,14 +102,10 @@ class StatusChange(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    application_id: Mapped[int] = mapped_column(
-        ForeignKey("applications.id", ondelete="CASCADE")
-    )
+    application_id: Mapped[int] = mapped_column(ForeignKey("applications.id", ondelete="CASCADE"))
     from_status: Mapped[Status | None] = mapped_column(enum_column(Status))
     to_status: Mapped[Status] = mapped_column(enum_column(Status))
-    changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     note: Mapped[str | None] = mapped_column(Text)
 
     application: Mapped["Application"] = relationship(back_populates="status_changes")

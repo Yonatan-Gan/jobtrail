@@ -87,14 +87,10 @@ def delete_application(application_id: int, db: DbSession) -> None:
     response_model=StatusChangeRead,
     status_code=http.HTTP_201_CREATED,
 )
-def update_status(
-    application_id: int, payload: StatusChangeCreate, db: DbSession
-) -> StatusChange:
+def update_status(application_id: int, payload: StatusChangeCreate, db: DbSession) -> StatusChange:
     application = get_application_or_404(db, application_id)
     try:
-        return change_status(
-            db, application, payload.to_status, payload.changed_at, payload.note
-        )
+        return change_status(db, application, payload.to_status, payload.changed_at, payload.note)
     except InvalidTransitionError as exc:
         raise HTTPException(http.HTTP_409_CONFLICT, str(exc)) from None
 
