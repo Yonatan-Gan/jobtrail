@@ -45,10 +45,16 @@ jobtrail/
     │   ├── enums.py          StrEnums: Status, PositionType, Level, EmploymentType, WorkMode, Source, ContactRole
     │   ├── models.py         SQLAlchemy models (see Data model)
     │   ├── schemas.py        Pydantic schemas (Create / Update / Read per resource)
+    │   ├── status_rules.py   ALLOWED_TRANSITIONS + can_transition()
+    │   ├── services.py       change_status() – the only place a status changes
     │   └── routers/
-    │       └── companies.py  CRUD for /companies
+    │       ├── companies.py      CRUD for /companies
+    │       └── applications.py   CRUD, filters, status changes and history for /applications
     └── tests/
-        └── test_health.py
+        ├── conftest.py       test DB fixtures (db_session, client)
+        ├── test_api.py
+        ├── test_health.py
+        └── test_status_rules.py
 ```
 
 ## Commands
@@ -119,18 +125,30 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - Docker Compose Postgres
 - Data model, first Alembic migration applied (6 tables incl. alembic_version)
 - Company schemas and CRUD endpoints (`/companies`)
+- `app/status_rules.py`: `ALLOWED_TRANSITIONS` + `can_transition()` (written by me), with parametrized tests
+- Application schemas and CRUD endpoints (`/applications`) with filters (status, company_id, position_type)
+- Status-change service (`app/services.py`, `change_status`) + `POST /applications/{id}/status` and `GET /applications/{id}/history`
+- API tests against an isolated Postgres test database (`tests/conftest.py`, `tests/test_api.py`). 41 tests passing
 
-**In progress (week 1)**
-- `app/status_rules.py`: `ALLOWED_TRANSITIONS` dict + `can_transition()`. **I'm writing this one myself**, review it but don't write it for me.
-- Application schemas and CRUD endpoints, with filtering (status, company, position_type)
-- Status-change service function + endpoint (e.g. `POST /applications/{id}/status`)
-- Tests against a separate Postgres test database
-- `/stats` endpoint (response rate, days to first response, funnel)
+**Next**
+- `/stats` endpoint (response rate, days to first response, funnel by stage)
+- Dockerfile (multi-stage, non-root) + full-stack docker-compose
+- GitHub Actions CI: ruff format --check → ruff check → pytest (with a Postgres service) → build → push image
 
 **Roadmap**
-- Week 2: Dockerfile (multi-stage, non-root), docker-compose for the full stack, GitHub Actions CI (ruff → pytest → build → push image)
 - Weeks 3–4: Terraform on AWS (VPC, ECS Fargate, RDS, ECR), CD on merge, GitHub OIDC (no long-lived keys), users/auth before deploying
 - Later: Kubernetes (kind/k3s locally), Prometheus/Grafana, Trivy + Dependabot, React dashboard
+
+## Testing
+
+- Unit tests (`test_status_rules.py`, `test_health.py`) need no database.
+- API tests use the `client` fixture from `tests/conftest.py`:
+  - a separate database `jobtrail_test` (URL from `TEST_DATABASE_URL`, defaults to localhost)
+  - tables created once per run from `Base.metadata`
+  - each test runs inside a transaction that is rolled back afterwards (`join_transaction_mode="create_savepoint"`), so tests are isolated
+  - `app.dependency_overrides[get_db]` swaps in the test session
+- One-time setup: `docker compose exec db createdb -U jobtrail jobtrail_test`
+- Before committing: `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`
 
 ## Known gotchas
 
