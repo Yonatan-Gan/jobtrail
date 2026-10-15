@@ -11,5 +11,35 @@ services:
       test: ["CMD-SHELL", "pg_isready -U jobtrail"]
       interval: 5s
       retries: 5
+
+  migrate:
+    build: ./backend
+    image: jobtrail-backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://jobtrail:jobtrail@db:5432/jobtrail
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    image: jobtrail-backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://jobtrail:jobtrail@db:5432/jobtrail
+    ports: ["8000:8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health')
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   pgdata:
