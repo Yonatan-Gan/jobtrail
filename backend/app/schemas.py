@@ -107,3 +107,16 @@ class StatusChangeRead(BaseModel):
     to_status: Status
     changed_at: datetime
     note: str | None
+
+
+class FunnelStage(BaseModel):
+    stage: Status
+    count: int
+
+
+class StatsRead(BaseModel):
+    applied: int
+    responded: int
+    response_rate: float
+    avg_days_to_first_response: float | None
+    funnel: list[FunnelStage]
