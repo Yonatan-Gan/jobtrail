@@ -30,9 +30,11 @@ The project is also meant to **show DevOps skills**: containerization, CI/CD, in
 
 ```
 jobtrail/
-├── docker-compose.yml        Postgres 16 service "db" (user/pass/db: jobtrail), volume pgdata
+├── docker-compose.yml        Postgres 16 "db" (user/pass/db: jobtrail, volume pgdata), one-shot "migrate", and "api"
 ├── README.md
 └── backend/
+    ├── Dockerfile            multi-stage (uv builder → slim runtime), non-root user, read-only code
+    ├── .dockerignore         keeps .venv, .env, caches and tests out of the build
     ├── pyproject.toml        deps, pytest pythonpath=["."], ruff config (excludes migrations/versions)
     ├── uv.lock
     ├── .env                  DATABASE_URL (git-ignored); .env.example is committed
@@ -47,13 +49,16 @@ jobtrail/
     │   ├── schemas.py        Pydantic schemas (Create / Update / Read per resource)
     │   ├── status_rules.py   ALLOWED_TRANSITIONS + can_transition()
     │   ├── services.py       change_status() – the only place a status changes
+    │   ├── stats.py          read-only stats queries over status_changes, get_stats()
     │   └── routers/
     │       ├── companies.py      CRUD for /companies
-    │       └── applications.py   CRUD, filters, status changes and history for /applications
+    │       ├── applications.py   CRUD, filters, status changes and history for /applications
+    │       └── stats.py          GET /stats
     └── tests/
         ├── conftest.py       test DB fixtures (db_session, client)
         ├── test_api.py
         ├── test_health.py
+        ├── test_stats.py
         └── test_status_rules.py
 ```
 
@@ -66,6 +71,8 @@ docker compose up -d db
 docker compose ps
 docker compose exec db psql -U jobtrail -c '\dt'
 ```
+
+`docker compose up --build` runs the whole stack (db → migrate → api on port 8000). Stop any local uvicorn first, because both use port 8000.
 
 ```bash
 cd backend
@@ -128,11 +135,11 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - `app/status_rules.py`: `ALLOWED_TRANSITIONS` + `can_transition()` (written by me), with parametrized tests
 - Application schemas and CRUD endpoints (`/applications`) with filters (status, company_id, position_type)
 - Status-change service (`app/services.py`, `change_status`) + `POST /applications/{id}/status` and `GET /applications/{id}/history`
-- API tests against an isolated Postgres test database (`tests/conftest.py`, `tests/test_api.py`). 41 tests passing
+- API tests against an isolated Postgres test database (`tests/conftest.py`, `tests/test_api.py`)
+- `GET /stats` (`app/stats.py`, `routers/stats.py`): response rate, average days to first response, funnel by stage. 44 tests passing
+- Dockerfile (multi-stage, non-root) + full-stack docker-compose with a one-shot `migrate` service. Verified end to end in an isolated compose project
 
 **Next**
-- `/stats` endpoint (response rate, days to first response, funnel by stage)
-- Dockerfile (multi-stage, non-root) + full-stack docker-compose
 - GitHub Actions CI: ruff format --check → ruff check → pytest (with a Postgres service) → build → push image
 
 **Roadmap**

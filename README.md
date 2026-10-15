@@ -10,6 +10,7 @@ Job-search management API: track companies, applications, contacts and every sta
 - **Companies and applications:** create, read, update and delete, with filters by status, company and position type
 - **Status flow with rules:** `saved → applied → screening → assignment → technical → final → offer`, plus `rejected`, `withdrawn`, `ghosted`, `accepted` and `declined`. Moves that aren't allowed (e.g. `applied → offer`) are rejected with `409 Conflict`
 - **Full history:** every status change is stored with a timestamp and an optional note
+- **Stats:** response rate, average days to first response and a funnel by stage, all computed from the status history
 - **Validation:** request data is checked by Pydantic (`422`), and the database enforces unique company names, foreign keys and a salary-range check
 
 ## Design
@@ -29,6 +30,7 @@ Job-search management API: track companies, applications, contacts and every sta
 | `GET` / `PATCH` / `DELETE` | `/applications/{id}` | Read / update / delete an application |
 | `POST` | `/applications/{id}/status` | Change status (validated) |
 | `GET` | `/applications/{id}/history` | Status history |
+| `GET` | `/stats` | Response rate, average days to first response, funnel by stage |
 
 Interactive docs: http://localhost:8000/docs
 
@@ -44,6 +46,16 @@ uv sync
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --reload-dir app
 ```
+
+## Run the full stack with Docker
+
+```bash
+docker compose up --build
+```
+
+This starts three services in order: `db` (Postgres), `migrate` (runs `alembic upgrade head` once and exits) and `api` (the backend image, on http://localhost:8000). Stop a local `uvicorn` first, because both use port 8000.
+
+The image is built in two stages (dependencies installed with uv in a builder stage, then only the virtualenv and the code copied into a slim runtime stage) and runs as a non-root user.
 
 ## Tests
 
