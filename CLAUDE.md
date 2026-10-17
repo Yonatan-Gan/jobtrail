@@ -30,6 +30,7 @@ The project is also meant to **show DevOps skills**: containerization, CI/CD, in
 
 ```
 jobtrail/
+├── .github/workflows/ci.yml CI: ruff + pytest (Postgres service) → build image, push to GHCR on main
 ├── docker-compose.yml        Postgres 16 "db" (user/pass/db: jobtrail, volume pgdata), one-shot "migrate", and "api"
 ├── README.md
 └── backend/
@@ -139,8 +140,11 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - `GET /stats` (`app/stats.py`, `routers/stats.py`): response rate, average days to first response, funnel by stage. 44 tests passing
 - Dockerfile (multi-stage, non-root) + full-stack docker-compose with a one-shot `migrate` service. Verified end to end in an isolated compose project
 
+- GitHub Actions CI (`.github/workflows/ci.yml`): ruff format --check → ruff check → pytest with a Postgres service → build image → push to GHCR on main. Checked with actionlint and a local replay, **not yet run on GitHub**
+
 **Next**
-- GitHub Actions CI: ruff format --check → ruff check → pytest (with a Postgres service) → build → push image
+- Push to GitHub and confirm the first CI run is green
+- Terraform on AWS (see roadmap)
 
 **Roadmap**
 - Weeks 3–4: Terraform on AWS (VPC, ECS Fargate, RDS, ECR), CD on merge, GitHub OIDC (no long-lived keys), users/auth before deploying

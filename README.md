@@ -57,6 +57,13 @@ This starts three services in order: `db` (Postgres), `migrate` (runs `alembic u
 
 The image is built in two stages (dependencies installed with uv in a builder stage, then only the virtualenv and the code copied into a slim runtime stage) and runs as a non-root user.
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`:
+
+1. **Lint and test:** `ruff format --check`, `ruff check` and `pytest` against a Postgres service container.
+2. **Build image:** builds the Docker image. On pushes to `main` it also pushes it to GitHub Container Registry, tagged with the commit SHA and `latest`.
+
 ## Tests
 
 API tests run against a separate `jobtrail_test` database. Each test runs inside a transaction that is rolled back afterwards, so tests never affect each other or your real data.
