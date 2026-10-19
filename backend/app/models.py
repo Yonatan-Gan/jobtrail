@@ -71,7 +71,7 @@ class Application(CreatedAtMixin, Base):
     city: Mapped[str | None] = mapped_column(String(100))
     salary_min: Mapped[int | None]
     salary_max: Mapped[int | None]
-    job_url: Mapped[str | None] = mapped_column(String(1000))
+    job_url: Mapped[str | None] = mapped_column(String(1000), unique=True, index=True)
     source: Mapped[Source] = mapped_column(enum_column(Source))
     skills: Mapped[list[str]] = mapped_column(ARRAY(String(50)), default=list, server_default="{}")
     status: Mapped[Status] = mapped_column(
@@ -88,7 +88,7 @@ class Application(CreatedAtMixin, Base):
         back_populates="application",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="StatusChange.changed_at",
+        order_by="[StatusChange.changed_at, StatusChange.id]",
     )
     contact_links: Mapped[list["ApplicationContact"]] = relationship(
         back_populates="application", cascade="all, delete-orphan", passive_deletes=True

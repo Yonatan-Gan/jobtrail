@@ -1,4 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
+
+from app import services
+from app.enums import Status
+from app.services import InvalidTransitionError
 
 
 def make_company(client: TestClient, name: str = "Wix") -> dict:
@@ -117,3 +124,154 @@ def test_deleting_application_removes_it(client: TestClient) -> None:
     app_id = make_application(client, company["id"])["id"]
     assert client.delete(f"/applications/{app_id}").status_code == 204
     assert client.get(f"/applications/{app_id}").status_code == 404
+
+
+def test_duplicate_job_url_returns_409(client: TestClient) -> None:
+    company = make_company(client)
+    url = "https://jobs.example/1"
+    make_application(client, company["id"], job_url=url)
+
+    payload = {
+        "company_id": company["id"],
+        "title": "Same job again",
+        "position_type": "backend",
+        "source": "linkedin",
+        "job_url": url,
+    }
+    assert client.post("/applications", json=payload).status_code == 409
+
+    other = make_application(client, company["id"])
+    response = client.patch(f"/applications/{other['id']}", json={"job_url": url})
+    assert response.status_code == 409
+
+
+def import_item(job_url: str, **overrides) -> dict:
+    item = {
+        "company": "WeDev Technologies",
+        "title": "Junior Fullstack Software Developer",
+        "position_type": "fullstack",
+        "level": "junior",
+        "employment_type": "full_time",
+        "work_mode": None,
+        "city": None,
+        "job_url": job_url,
+        "source": "company_site",
+        "skills": ["react", "node.js", "mongodb", "sql"],
+        "notes": "Fit: Good. CV: FullStack.",
+    }
+    item.update(overrides)
+    return item
+
+
+def import_items(client: TestClient, items: list[dict]) -> dict:
+    response = client.post("/applications/import", json=items)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_import_creates_companies_and_applications(client: TestClient) -> None:
+    items = [
+        import_item("https://jobs.example/1"),
+        import_item(
+            "https://jobs.example/2",
+            company="Unknown (via jobify360 – high-tech company)",
+            work_mode="onsite",
+            city="Holon",
+        ),
+    ]
+    result = import_items(client, items)
+    assert result == {"created": 2, "skipped": 0, "skipped_urls": []}
+
+    companies = client.get("/companies").json()
+    assert [c["name"] for c in companies] == [
+        "Unknown (via jobify360 – high-tech company)",
+        "WeDev Technologies",
+    ]
+    applications = client.get("/applications").json()
+    assert len(applications) == 2
+    assert all(a["status"] == "saved" and a["applied_at"] is None for a in applications)
+
+
+def test_reimporting_same_file_creates_nothing(client: TestClient) -> None:
+    urls = ["https://jobs.example/1", "https://jobs.example/2"]
+    items = [import_item(url) for url in urls]
+    import_items(client, items)
+
+    result = import_items(client, items)
+    assert result == {"created": 0, "skipped": 2, "skipped_urls": urls}
+    assert len(client.get("/applications").json()) == 2
+
+
+def test_duplicate_url_in_same_file_is_created_once(client: TestClient) -> None:
+    url = "https://jobs.example/1"
+    result = import_items(client, [import_item(url), import_item(url, title="Posted twice")])
+    assert result == {"created": 1, "skipped": 1, "skipped_urls": [url]}
+    assert len(client.get("/applications").json()) == 1
+
+
+def test_import_reuses_existing_company(client: TestClient) -> None:
+    company = make_company(client, "WeDev Technologies")
+    import_items(
+        client, [import_item("https://jobs.example/1"), import_item("https://jobs.example/2")]
+    )
+
+    assert [c["id"] for c in client.get("/companies").json()] == [company["id"]]
+    applications = client.get("/applications").json()
+    assert {a["company_id"] for a in applications} == {company["id"]}
+
+
+def test_import_applied_item_uses_status_rules(client: TestClient) -> None:
+    item = import_item(
+        "https://jobs.example/1", status="applied", applied_at="2026-10-15T09:30:00Z"
+    )
+    import_items(client, [item])
+
+    application = client.get("/applications").json()[0]
+    assert application["status"] == "applied"
+    assert datetime.fromisoformat(application["applied_at"]) == datetime(
+        2026, 10, 15, 9, 30, tzinfo=UTC
+    )
+    history = client.get(f"/applications/{application['id']}/history").json()
+    assert [(h["from_status"], h["to_status"]) for h in history] == [
+        (None, "saved"),
+        ("saved", "applied"),
+    ]
+
+
+def test_import_applied_without_date_uses_now(client: TestClient) -> None:
+    import_items(client, [import_item("https://jobs.example/1", status="applied")])
+
+    applied_at = datetime.fromisoformat(client.get("/applications").json()[0]["applied_at"])
+    assert datetime.now(UTC) - applied_at < timedelta(minutes=1)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("position_type", "wizard"), ("source", "carrier_pigeon"), ("status", "rejected")],
+)
+def test_import_invalid_values_return_422(client: TestClient, field: str, value: str) -> None:
+    item = import_item("https://jobs.example/1", **{field: value})
+    response = client.post("/applications/import", json=[item])
+    assert response.status_code == 422
+    assert client.get("/applications").json() == []
+
+
+def test_import_applied_at_requires_applied_status(client: TestClient) -> None:
+    item = import_item("https://jobs.example/1", applied_at="2026-10-15T09:30:00Z")
+    response = client.post("/applications/import", json=[item])
+    assert response.status_code == 422
+
+
+def test_failed_import_saves_nothing(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def failing_change_status(*args, **kwargs):
+        raise InvalidTransitionError(Status.SAVED, Status.APPLIED)
+
+    monkeypatch.setattr(services, "change_status", failing_change_status)
+    items = [
+        import_item("https://jobs.example/1"),
+        import_item("https://jobs.example/2", company="Other Co", status="applied"),
+    ]
+    response = client.post("/applications/import", json=items)
+    assert response.status_code == 409
+    assert client.get("/applications").json() == []
+    assert client.get("/companies").json() == []

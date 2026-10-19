@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi import status as http
+from psycopg.errors import UniqueViolation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -8,14 +9,23 @@ from app.enums import PositionType, Status
 from app.models import Application, Company, StatusChange
 from app.schemas import (
     ApplicationCreate,
+    ApplicationImportItem,
     ApplicationRead,
     ApplicationUpdate,
+    ImportResult,
     StatusChangeCreate,
     StatusChangeRead,
 )
-from app.services import InvalidTransitionError, change_status
+from app.services import (
+    InvalidTransitionError,
+    change_status,
+    import_applications,
+    new_application,
+)
 
 router = APIRouter(prefix="/applications", tags=["applications"])
+
+DUPLICATE_JOB_URL = "An application with this job_url already exists"
 
 
 def get_application_or_404(db: DbSession, application_id: int) -> Application:
@@ -29,12 +39,28 @@ def get_application_or_404(db: DbSession, application_id: int) -> Application:
 def create_application(payload: ApplicationCreate, db: DbSession) -> Application:
     if db.get(Company, payload.company_id) is None:
         raise HTTPException(422, "Company does not exist")
-    application = Application(**payload.model_dump(), status=Status.SAVED)
-    application.status_changes.append(StatusChange(from_status=None, to_status=Status.SAVED))
+    application = new_application(payload.model_dump())
     db.add(application)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(http.HTTP_409_CONFLICT, DUPLICATE_JOB_URL) from None
     db.refresh(application)
     return application
+
+
+@router.post("/import", response_model=ImportResult)
+def bulk_import(items: list[ApplicationImportItem], db: DbSession) -> ImportResult:
+    try:
+        result = import_applications(db, items)
+        db.commit()
+    except (IntegrityError, InvalidTransitionError):
+        db.rollback()
+        raise HTTPException(
+            http.HTTP_409_CONFLICT, "Import conflicts with existing data; nothing was imported"
+        ) from None
+    return result
 
 
 @router.get("", response_model=list[ApplicationRead])
@@ -68,8 +94,10 @@ def update_application(
         setattr(application, field, value)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        if isinstance(exc.orig, UniqueViolation):
+            raise HTTPException(http.HTTP_409_CONFLICT, DUPLICATE_JOB_URL) from None
         raise HTTPException(422, "Invalid update: check company_id and salary range") from None
     db.refresh(application)
     return application
@@ -90,9 +118,12 @@ def delete_application(application_id: int, db: DbSession) -> None:
 def update_status(application_id: int, payload: StatusChangeCreate, db: DbSession) -> StatusChange:
     application = get_application_or_404(db, application_id)
     try:
-        return change_status(db, application, payload.to_status, payload.changed_at, payload.note)
+        change = change_status(application, payload.to_status, payload.changed_at, payload.note)
     except InvalidTransitionError as exc:
         raise HTTPException(http.HTTP_409_CONFLICT, str(exc)) from None
+    db.commit()
+    db.refresh(change)
+    return change
 
 
 @router.get("/{application_id}/history", response_model=list[StatusChangeRead])

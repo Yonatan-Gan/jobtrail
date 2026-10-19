@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -107,6 +107,34 @@ class StatusChangeRead(BaseModel):
     to_status: Status
     changed_at: datetime
     note: str | None
+
+
+class ApplicationImportItem(BaseModel):
+    company: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=200)
+    position_type: PositionType
+    level: Level = Level.JUNIOR
+    employment_type: EmploymentType = EmploymentType.FULL_TIME
+    work_mode: WorkMode | None = None
+    city: str | None = Field(default=None, max_length=100)
+    job_url: str = Field(min_length=1, max_length=1000)
+    source: Source
+    skills: list[str] = Field(default_factory=list)
+    notes: str | None = None
+    status: Literal[Status.SAVED, Status.APPLIED] = Status.SAVED
+    applied_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def check_applied_at(self) -> Self:
+        if self.applied_at is not None and self.status != Status.APPLIED:
+            raise ValueError("applied_at can only be set when status is 'applied'")
+        return self
+
+
+class ImportResult(BaseModel):
+    created: int
+    skipped: int
+    skipped_urls: list[str]
 
 
 class FunnelStage(BaseModel):
