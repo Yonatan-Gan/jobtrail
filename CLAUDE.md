@@ -49,7 +49,7 @@ jobtrail/
     │   ├── models.py         SQLAlchemy models (see Data model)
     │   ├── schemas.py        Pydantic schemas (Create / Update / Read per resource)
     │   ├── status_rules.py   ALLOWED_TRANSITIONS + can_transition()
-    │   ├── services.py       change_status() – the only place a status changes
+    │   ├── services.py       change_status() (the only place a status changes), new_application(), import_applications(); never commit
     │   ├── stats.py          read-only stats queries over status_changes, get_stats()
     │   └── routers/
     │       ├── companies.py      CRUD for /companies
@@ -92,7 +92,7 @@ Always run `ruff check .` and `pytest` before committing.
 Five tables. `applications` stores the **current state**; `status_changes` stores the **full history**.
 
 - **companies:** id, name (unique), website, notes, created_at
-- **applications:** id, company_id (FK, ON DELETE RESTRICT), title, position_type, level (default junior), employment_type (default full_time), work_mode, city, salary_min / salary_max (NIS monthly, CHECK min <= max), job_url, source, skills (Postgres `ARRAY(String)` with GIN index), status (default saved, indexed), applied_at, notes, created_at, updated_at
+- **applications:** id, company_id (FK, ON DELETE RESTRICT), title, position_type, level (default junior), employment_type (default full_time), work_mode, city, salary_min / salary_max (NIS monthly, CHECK min <= max), job_url (unique index `ix_applications_job_url`; multiple NULLs allowed), source, skills (Postgres `ARRAY(String)` with GIN index), status (default saved, indexed), applied_at, notes, created_at, updated_at
 - **status_changes:** id, application_id (FK, ON DELETE CASCADE), from_status (nullable), to_status, changed_at (default now, can be backdated), note. Index on (application_id, changed_at)
 - **contacts:** id, company_id (FK, nullable, ON DELETE SET NULL), name, title, email, phone, linkedin_url, notes, created_at
 - **application_contacts:** junction table, composite PK (application_id, contact_id), role (recruiter / referrer / hiring_manager / interviewer / other). Both FKs ON DELETE CASCADE
@@ -106,6 +106,8 @@ Five tables. `applications` stores the **current state**; `status_changes` store
 - Endpoints use `db: DbSession` (an `Annotated[Session, Depends(get_db)]` alias from db.py).
 - DB constraint violations (`IntegrityError`) are caught, rolled back and turned into HTTP **409**. Missing rows → **404**. Pydantic handles **422**.
 - `PATCH` uses `model_dump(exclude_unset=True)` so only sent fields change.
+- **Service functions never commit.** They change objects in the session; the endpoint commits once, so one request is one transaction. The bulk import relies on this to be all-or-nothing.
+- **`job_url` is unique.** A duplicate returns 409 on create and PATCH, and is skipped (not an error) on import, which makes re-importing a file safe.
 
 ### Status flow
 
@@ -124,7 +126,7 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 | ghosted | screening, assignment, technical, final, rejected |
 | rejected, withdrawn, accepted, declined | (none – final) |
 
-**Key rule:** status is stored twice (current on `applications`, history in `status_changes`). Only **one service function** may change a status. In a single transaction it must: validate the move, update `applications.status` (and `applied_at` when moving to applied), and insert a `status_changes` row.
+**Key rule:** status is stored twice (current on `applications`, history in `status_changes`). Only **one service function** (`change_status`) may change a status. In a single transaction it must: validate the move, update `applications.status` (and `applied_at` when moving to applied), and insert a `status_changes` row.
 
 ## Progress
 
@@ -139,11 +141,10 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - API tests against an isolated Postgres test database (`tests/conftest.py`, `tests/test_api.py`)
 - `GET /stats` (`app/stats.py`, `routers/stats.py`): response rate, average days to first response, funnel by stage. 44 tests passing
 - Dockerfile (multi-stage, non-root) + full-stack docker-compose with a one-shot `migrate` service. Verified end to end in an isolated compose project
-
-- GitHub Actions CI (`.github/workflows/ci.yml`): ruff format --check → ruff check → pytest with a Postgres service → build image → push to GHCR on main. Checked with actionlint and a local replay, **not yet run on GitHub**
+- GitHub Actions CI (`.github/workflows/ci.yml`): ruff format --check → ruff check → pytest with a Postgres service → build image → push to GHCR on main. First GitHub run (2026-10-17) passed both jobs; the image is public at `ghcr.io/yonatan-gan/jobtrail-backend` (tags `latest`, `sha-<commit>`)
+- Bulk import `POST /applications/import` (`import_applications` in `app/services.py`): JSON list of job listings, companies matched by exact name or created, duplicate `job_url`s skipped (in the DB and within the file), optional `status: applied` goes through `change_status`, whole request is one transaction. Second migration `705550c1d083` adds the unique index on `applications.job_url`. 56 tests passing
 
 **Next**
-- Push to GitHub and confirm the first CI run is green
 - Terraform on AWS (see roadmap)
 
 **Roadmap**
