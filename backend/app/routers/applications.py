@@ -69,8 +69,11 @@ def list_applications(
     status: Status | None = None,
     company_id: int | None = None,
     position_type: PositionType | None = None,
+    job_url: str | None = None,
 ) -> list[Application]:
     stmt = select(Application).order_by(Application.created_at.desc())
+    if job_url is not None:
+        stmt = stmt.where(Application.job_url == job_url)
     if status is not None:
         stmt = stmt.where(Application.status == status)
     if company_id is not None:

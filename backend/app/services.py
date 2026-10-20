@@ -55,19 +55,37 @@ def change_status(
 
 
 def import_applications(db: Session, items: list[ApplicationImportItem]) -> ImportResult:
-    """Add new applications from an import file to the session, skipping known job URLs."""
+    """Add new applications from an import file to the session.
+
+    A job URL that already exists is skipped, except one case: an "applied" item for an
+    application that is still "saved" moves it to applied through change_status.
+    A job URL that appears again later in the same file is always skipped.
+    """
     urls = [item.job_url for item in items]
     names = {item.company for item in items}
-    known_urls = set(db.scalars(select(Application.job_url).where(Application.job_url.in_(urls))))
+    existing = {
+        a.job_url: a for a in db.scalars(select(Application).where(Application.job_url.in_(urls)))
+    }
     companies = {c.name: c for c in db.scalars(select(Company).where(Company.name.in_(names)))}
 
     created = 0
+    updated_urls: list[str] = []
     skipped_urls: list[str] = []
+    seen_urls: set[str] = set()
     for item in items:
-        if item.job_url in known_urls:
+        if item.job_url in seen_urls:
             skipped_urls.append(item.job_url)
             continue
-        known_urls.add(item.job_url)
+        seen_urls.add(item.job_url)
+
+        application = existing.get(item.job_url)
+        if application is not None:
+            if item.status == Status.APPLIED and application.status == Status.SAVED:
+                change_status(application, Status.APPLIED, changed_at=item.applied_at)
+                updated_urls.append(item.job_url)
+            else:
+                skipped_urls.append(item.job_url)
+            continue
 
         company = companies.get(item.company)
         if company is None:
@@ -86,4 +104,10 @@ def import_applications(db: Session, items: list[ApplicationImportItem]) -> Impo
         db.add(application)
         created += 1
 
-    return ImportResult(created=created, skipped=len(skipped_urls), skipped_urls=skipped_urls)
+    return ImportResult(
+        created=created,
+        updated=len(updated_urls),
+        skipped=len(skipped_urls),
+        updated_urls=updated_urls,
+        skipped_urls=skipped_urls,
+    )

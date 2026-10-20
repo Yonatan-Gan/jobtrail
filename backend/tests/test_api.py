@@ -180,7 +180,13 @@ def test_import_creates_companies_and_applications(client: TestClient) -> None:
         ),
     ]
     result = import_items(client, items)
-    assert result == {"created": 2, "skipped": 0, "skipped_urls": []}
+    assert result == {
+        "created": 2,
+        "updated": 0,
+        "skipped": 0,
+        "updated_urls": [],
+        "skipped_urls": [],
+    }
 
     companies = client.get("/companies").json()
     assert [c["name"] for c in companies] == [
@@ -198,14 +204,26 @@ def test_reimporting_same_file_creates_nothing(client: TestClient) -> None:
     import_items(client, items)
 
     result = import_items(client, items)
-    assert result == {"created": 0, "skipped": 2, "skipped_urls": urls}
+    assert result == {
+        "created": 0,
+        "updated": 0,
+        "skipped": 2,
+        "updated_urls": [],
+        "skipped_urls": urls,
+    }
     assert len(client.get("/applications").json()) == 2
 
 
 def test_duplicate_url_in_same_file_is_created_once(client: TestClient) -> None:
     url = "https://jobs.example/1"
     result = import_items(client, [import_item(url), import_item(url, title="Posted twice")])
-    assert result == {"created": 1, "skipped": 1, "skipped_urls": [url]}
+    assert result == {
+        "created": 1,
+        "updated": 0,
+        "skipped": 1,
+        "updated_urls": [],
+        "skipped_urls": [url],
+    }
     assert len(client.get("/applications").json()) == 1
 
 
@@ -275,3 +293,92 @@ def test_failed_import_saves_nothing(client: TestClient, monkeypatch: pytest.Mon
     assert response.status_code == 409
     assert client.get("/applications").json() == []
     assert client.get("/companies").json() == []
+
+
+def test_applied_item_updates_saved_application(client: TestClient) -> None:
+    url = "https://jobs.example/1"
+    import_items(client, [import_item(url)])
+
+    # Applied after it was saved. A fixed past date would sort "applied" before "saved"
+    # in the database, while the session cache keeps insertion order: a flaky test.
+    applied_at = datetime.now(UTC) + timedelta(hours=1)
+    applied = import_item(url, status="applied", applied_at=applied_at.isoformat())
+    result = import_items(client, [applied])
+    assert result == {
+        "created": 0,
+        "updated": 1,
+        "skipped": 0,
+        "updated_urls": [url],
+        "skipped_urls": [],
+    }
+
+    [application] = client.get("/applications").json()
+    assert application["status"] == "applied"
+    assert datetime.fromisoformat(application["applied_at"]) == applied_at
+    history = client.get(f"/applications/{application['id']}/history").json()
+    assert [(h["from_status"], h["to_status"]) for h in history] == [
+        (None, "saved"),
+        ("saved", "applied"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("moves", "expected_status"),
+    [([], "applied"), (["screening"], "screening"), (["rejected"], "rejected")],
+)
+def test_applied_item_only_updates_saved_applications(
+    client: TestClient, moves: list[str], expected_status: str
+) -> None:
+    url = "https://jobs.example/1"
+    import_items(client, [import_item(url, status="applied")])
+    app_id = client.get("/applications").json()[0]["id"]
+    for status in moves:
+        response = client.post(f"/applications/{app_id}/status", json={"to_status": status})
+        assert response.status_code == 201
+    history_before = client.get(f"/applications/{app_id}/history").json()
+
+    result = import_items(client, [import_item(url, status="applied")])
+
+    assert result["updated"] == 0
+    assert result["skipped_urls"] == [url]
+    assert client.get(f"/applications/{app_id}").json()["status"] == expected_status
+    assert client.get(f"/applications/{app_id}/history").json() == history_before
+
+
+def test_applied_duplicate_later_in_same_file_is_skipped(client: TestClient) -> None:
+    url = "https://jobs.example/1"
+    result = import_items(client, [import_item(url), import_item(url, status="applied")])
+
+    assert (result["created"], result["updated"], result["skipped_urls"]) == (1, 0, [url])
+    assert client.get("/applications").json()[0]["status"] == "saved"
+
+
+def test_filter_applications_by_job_url(client: TestClient) -> None:
+    company = make_company(client)
+    url = "https://jobs.example/1?ref=board&lang=en"
+    target = make_application(client, company["id"], job_url=url)
+    make_application(client, company["id"], job_url="https://jobs.example/2")
+    make_application(client, company["id"])
+
+    found = client.get("/applications", params={"job_url": url}).json()
+    assert [a["id"] for a in found] == [target["id"]]
+    missing = client.get("/applications", params={"job_url": "https://jobs.example/nope"})
+    assert missing.json() == []
+
+
+def test_mark_applied_by_job_url(client: TestClient) -> None:
+    """The API calls behind `make applied`: look up by job_url, then change the status."""
+    url = "https://jobs.example/1"
+    import_items(client, [import_item(url)])
+
+    [application] = client.get("/applications", params={"job_url": url}).json()
+    status_url = f"/applications/{application['id']}/status"
+    response = client.post(
+        status_url, json={"to_status": "applied", "changed_at": "2026-10-19T12:00:00+0300"}
+    )
+    assert response.status_code == 201
+
+    updated = client.get(f"/applications/{application['id']}").json()
+    assert updated["status"] == "applied"
+    assert datetime.fromisoformat(updated["applied_at"]) == datetime(2026, 10, 19, 9, tzinfo=UTC)
+    assert client.post(status_url, json={"to_status": "applied"}).status_code == 409

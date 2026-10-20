@@ -27,7 +27,7 @@ Job-search management API: track companies, applications, contacts and every sta
 | `GET` | `/health` | Health check |
 | `POST` / `GET` | `/companies` | Create / list companies |
 | `GET` / `PATCH` / `DELETE` | `/companies/{id}` | Read / update / delete a company |
-| `POST` / `GET` | `/applications` | Create / list applications (`?status=`, `?company_id=`, `?position_type=`) |
+| `POST` / `GET` | `/applications` | Create / list applications (`?status=`, `?company_id=`, `?position_type=`, `?job_url=`) |
 | `POST` | `/applications/import` | Import a list of job listings from JSON (skips job URLs that already exist) |
 | `GET` / `PATCH` / `DELETE` | `/applications/{id}` | Read / update / delete an application |
 | `POST` | `/applications/{id}/status` | Change status (validated) |
@@ -67,9 +67,58 @@ Optional: `"status": "applied"` (default `"saved"`) and `"applied_at"` (defaults
 How it behaves:
 
 - **Companies** are matched by exact name and created if missing.
-- **Duplicates are skipped:** an item whose `job_url` already exists, or appears earlier in the same file, is not created again. The response lists them: `{"created": 2, "skipped": 1, "skipped_urls": [...]}`.
-- **Status rules still apply:** an `"applied"` item is created as `saved` and moved to `applied` through the normal status logic, so its history has both steps.
+- **Duplicates are skipped:** an item whose `job_url` already exists, or appears earlier in the same file, is not created again.
+- **One exception, applied files:** an `"applied"` item whose application already exists and is still `saved` moves it to `applied` (reported as `updated`). An application that is already further along is never moved back; that item is skipped.
+- **Status rules still apply:** a new `"applied"` item is created as `saved` and moved to `applied` through the normal status logic, so its history has both steps.
+- **The response** counts and lists what happened: `{"created": 2, "updated": 1, "skipped": 1, "updated_urls": [...], "skipped_urls": [...]}`.
 - **All or nothing:** the whole file is one database transaction. If anything fails, nothing is saved. Invalid values (for example an unknown `position_type`) are rejected with `422` before anything is written.
+
+### Import the newest file from Downloads
+
+With the API running (locally or with `docker compose up --build`), from the repo root:
+
+```bash
+make import
+```
+
+This runs `scripts/import_latest.sh`, which:
+
+1. finds the most recently modified `jobtrail_import_*.json` or `jobtrail_applied_*.json` in `~/Downloads`,
+2. checks that the API answers on `/health`, and says so clearly if it isn't running,
+3. posts the file to `/applications/import` and prints the result:
+
+```text
+Importing /Users/you/Downloads/jobtrail_applied_2026-10-19.json
+Created: 1
+Updated: 1
+Skipped: 1
+  marked as applied: https://job-boards.eu.greenhouse.io/wedev/jobs/4871703101
+  already imported: https://jobs.example/already-applied
+```
+
+If the file is rejected, it prints each problem with its position in the file (for example `body.1.position_type: ...` for the second item) and exits with an error. To use another folder or API address, set `JOBTRAIL_IMPORT_DIR` or `JOBTRAIL_API_URL`:
+
+```bash
+JOBTRAIL_API_URL=http://localhost:8001 make import
+```
+
+### Mark one application as applied
+
+No JSON file needed, from the repo root:
+
+```bash
+make applied URL='https://job-boards.eu.greenhouse.io/wedev/jobs/4871703101'
+```
+
+```bash
+make applied URL='https://job-boards.eu.greenhouse.io/wedev/jobs/4871703101' DATE=2026-10-17
+```
+
+This runs `scripts/mark_applied.sh`, which finds the application with `GET /applications?job_url=...` and moves it to `applied` with `POST /applications/{id}/status`, so the status rules and history apply as usual. Without `DATE` the current time is recorded; with `DATE` it records noon local time on that day.
+
+- Put the URL in single quotes, because characters like `?` and `&` mean something to the shell.
+- If no application has that URL, it says so (import it first with `make import`).
+- If the move isn't allowed (for example the application is already `applied`), it prints the current status and the API's reason, and changes nothing.
 
 ## Run locally
 

@@ -32,6 +32,11 @@ The project is also meant to **show DevOps skills**: containerization, CI/CD, in
 jobtrail/
 ├── .github/workflows/ci.yml CI: ruff + pytest (Postgres service) → build image, push to GHCR on main
 ├── docker-compose.yml        Postgres 16 "db" (user/pass/db: jobtrail, volume pgdata), one-shot "migrate", and "api"
+├── Makefile                  `make import` → scripts/import_latest.sh, `make applied URL=… [DATE=…]` → scripts/mark_applied.sh
+├── scripts/
+│   ├── import_latest.sh      posts the newest ~/Downloads/jobtrail_{import,applied}_*.json to /applications/import
+│   ├── mark_applied.sh       finds an application by job_url (GET /applications?job_url=) and moves it to applied
+│   └── lib.sh                shared helpers (api_url, require_api, require_jq, print_api_error); sourced, not run
 ├── README.md
 └── backend/
     ├── Dockerfile            multi-stage (uv builder → slim runtime), non-root user, read-only code
@@ -75,6 +80,8 @@ docker compose exec db psql -U jobtrail -c '\dt'
 
 `docker compose up --build` runs the whole stack (db → migrate → api on port 8000). Stop any local uvicorn first, because both use port 8000.
 
+`make import` (repo root, API running) imports the newest `jobtrail_import_*.json` / `jobtrail_applied_*.json` from `~/Downloads`. `make applied URL='<job_url>' [DATE=YYYY-MM-DD]` marks one application as applied through the API. Override with `JOBTRAIL_IMPORT_DIR` / `JOBTRAIL_API_URL`. The scripts target macOS (bash 3.2, BSD `date`, `jq`), so no bash 4+ features.
+
 ```bash
 cd backend
 uv sync
@@ -107,7 +114,7 @@ Five tables. `applications` stores the **current state**; `status_changes` store
 - DB constraint violations (`IntegrityError`) are caught, rolled back and turned into HTTP **409**. Missing rows → **404**. Pydantic handles **422**.
 - `PATCH` uses `model_dump(exclude_unset=True)` so only sent fields change.
 - **Service functions never commit.** They change objects in the session; the endpoint commits once, so one request is one transaction. The bulk import relies on this to be all-or-nothing.
-- **`job_url` is unique.** A duplicate returns 409 on create and PATCH, and is skipped (not an error) on import, which makes re-importing a file safe.
+- **`job_url` is unique.** A duplicate returns 409 on create and PATCH, and is skipped (not an error) on import, which makes re-importing a file safe. The one exception: an import item with status `applied` moves an existing application that is still `saved` to applied (via `change_status`) and is reported as `updated`.
 
 ### Status flow
 
@@ -142,7 +149,8 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - `GET /stats` (`app/stats.py`, `routers/stats.py`): response rate, average days to first response, funnel by stage. 44 tests passing
 - Dockerfile (multi-stage, non-root) + full-stack docker-compose with a one-shot `migrate` service. Verified end to end in an isolated compose project
 - GitHub Actions CI (`.github/workflows/ci.yml`): ruff format --check → ruff check → pytest with a Postgres service → build image → push to GHCR on main. First GitHub run (2026-10-17) passed both jobs; the image is public at `ghcr.io/yonatan-gan/jobtrail-backend` (tags `latest`, `sha-<commit>`)
-- Bulk import `POST /applications/import` (`import_applications` in `app/services.py`): JSON list of job listings, companies matched by exact name or created, duplicate `job_url`s skipped (in the DB and within the file), optional `status: applied` goes through `change_status`, whole request is one transaction. Second migration `705550c1d083` adds the unique index on `applications.job_url`. 56 tests passing
+- Bulk import `POST /applications/import` (`import_applications` in `app/services.py`): JSON list of job listings, companies matched by exact name or created, duplicate `job_url`s skipped (in the DB and within the file), optional `status: applied` goes through `change_status`, whole request is one transaction. Second migration `705550c1d083` adds the unique index on `applications.job_url`
+- Daily-workflow helpers: `make import` (newest file from ~/Downloads), `make applied URL=… [DATE=…]` (lookup via new `?job_url=` filter on `GET /applications`, then the normal status endpoint). Import now updates `saved` → `applied` for applied items and reports `updated`. 63 tests passing
 
 **Next**
 - Terraform on AWS (see roadmap)

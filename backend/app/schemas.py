@@ -133,7 +133,9 @@ class ApplicationImportItem(BaseModel):
 
 class ImportResult(BaseModel):
     created: int
+    updated: int
     skipped: int
+    updated_urls: list[str]
     skipped_urls: list[str]
 
 
