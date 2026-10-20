@@ -24,7 +24,8 @@ The project is also meant to **show DevOps skills**: containerization, CI/CD, in
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 (typed `Mapped[...]` style), Alembic, pydantic-settings, psycopg 3
 - **Database:** PostgreSQL 16 (Docker Compose for local dev)
 - **Tooling:** `uv` (package manager), pytest + httpx, ruff (line length 100)
-- **Planned:** React + TypeScript frontend, Dockerfile, GitHub Actions CI/CD, Terraform on AWS
+- **Frontend:** React 19 + TypeScript 6 with Vite 8, TanStack Query 5, React Router 7, Tailwind CSS 4, Vitest 5 + Testing Library (jsdom 29), ESLint + Prettier. Node 22.13+ (React Router 8 / jsdom 30 would need Node 22.22+)
+- **Done:** Dockerfile, docker-compose stack, GitHub Actions CI (backend). **Planned:** frontend phases 2–5, Terraform on AWS
 
 ## Repo layout
 
@@ -38,6 +39,14 @@ jobtrail/
 │   ├── mark_applied.sh       finds an application by job_url (GET /applications?job_url=) and moves it to applied
 │   └── lib.sh                shared helpers (api_url, require_api, require_jq, print_api_error); sourced, not run
 ├── README.md
+├── frontend/                 React + TypeScript (Vite); see frontend/README.md
+│   ├── package.json          scripts: dev, build, lint, typecheck, test, format:check, gen:api
+│   ├── .env.development      VITE_API_URL for `npm run dev` (.env.test for Vitest)
+│   └── src/
+│       ├── api/              schema.d.ts (generated, don't edit), types.ts, client.ts (request, ApiError), endpoints.ts, queryClient.ts
+│       ├── components/       Layout (nav, skip link), PageHeader (<title>), ApiStatus
+│       ├── pages/            Dashboard, Applications, Companies, Import (placeholders), NotFound
+│       └── test/             setup.ts, render.tsx (renderWithProviders)
 └── backend/
     ├── Dockerfile            multi-stage (uv builder → slim runtime), non-root user, read-only code
     ├── .dockerignore         keeps .venv, .env, caches and tests out of the build
@@ -48,22 +57,25 @@ jobtrail/
     ├── migrations/           env.py reads settings.database_url and Base.metadata
     ├── app/
     │   ├── main.py           FastAPI app, /health, includes routers
-    │   ├── config.py         Settings (pydantic-settings), settings.database_url
+    │   ├── config.py         Settings (pydantic-settings): database_url, cors_origins (env CORS_ORIGINS, JSON list)
     │   ├── db.py             engine, SessionLocal, Base (with naming convention), get_db, DbSession
     │   ├── enums.py          StrEnums: Status, PositionType, Level, EmploymentType, WorkMode, Source, ContactRole
     │   ├── models.py         SQLAlchemy models (see Data model)
     │   ├── schemas.py        Pydantic schemas (Create / Update / Read per resource)
     │   ├── status_rules.py   ALLOWED_TRANSITIONS + can_transition()
-    │   ├── services.py       change_status() (the only place a status changes), new_application(), import_applications(); never commit
+    │   ├── services.py       change_status() (the only place a status changes), get_status_history(), new_application(), import_applications(); never commit
     │   ├── stats.py          read-only stats queries over status_changes, get_stats()
     │   └── routers/
     │       ├── companies.py      CRUD for /companies
     │       ├── applications.py   CRUD, filters, status changes and history for /applications
-    │       └── stats.py          GET /stats
+    │       ├── stats.py          GET /stats
+    │       └── meta.py           GET /meta/status-transitions (rules for the frontend)
     └── tests/
         ├── conftest.py       test DB fixtures (db_session, client)
         ├── test_api.py
+        ├── test_cors.py
         ├── test_health.py
+        ├── test_meta.py
         ├── test_stats.py
         └── test_status_rules.py
 ```
@@ -94,6 +106,20 @@ uv run alembic upgrade head
 
 Always run `ruff check .` and `pytest` before committing.
 
+```bash
+cd frontend
+npm install
+npm run dev
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run gen:api
+```
+
+`npm run dev` serves http://localhost:5173 and calls the API at `VITE_API_URL` (http://localhost:8000). `npm run gen:api` regenerates `src/api/schema.d.ts` from the running API; do it after changing backend schemas.
+
 ## Data model
 
 Five tables. `applications` stores the **current state**; `status_changes` stores the **full history**.
@@ -115,6 +141,10 @@ Five tables. `applications` stores the **current state**; `status_changes` store
 - `PATCH` uses `model_dump(exclude_unset=True)` so only sent fields change.
 - **Service functions never commit.** They change objects in the session; the endpoint commits once, so one request is one transaction. The bulk import relies on this to be all-or-nothing.
 - **`job_url` is unique.** A duplicate returns 409 on create and PATCH, and is skipped (not an error) on import, which makes re-importing a file safe. The one exception: an import item with status `applied` moves an existing application that is still `saved` to applied (via `change_status`) and is reported as `updated`.
+- **Read history with `get_status_history()`** (explicit `ORDER BY changed_at, id`), never by returning `application.status_changes`: within one session that list keeps insertion order, so the order would depend on the session cache.
+- **Backdating:** moving to `applied` with a time earlier than the `saved` row moves the saved row back to that time, so history never shows applied before saved.
+- **Input datetimes without a time zone are read as UTC** (`UtcDatetime` in schemas.py). Postgres runs in UTC, and aware datetimes can be compared safely.
+- **CORS** origins come from settings (`CORS_ORIGINS`), never hard-coded. Status rules reach the frontend through `GET /meta/status-transitions`; the frontend must not copy them.
 
 ### Status flow
 
@@ -146,18 +176,29 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - Application schemas and CRUD endpoints (`/applications`) with filters (status, company_id, position_type)
 - Status-change service (`app/services.py`, `change_status`) + `POST /applications/{id}/status` and `GET /applications/{id}/history`
 - API tests against an isolated Postgres test database (`tests/conftest.py`, `tests/test_api.py`)
-- `GET /stats` (`app/stats.py`, `routers/stats.py`): response rate, average days to first response, funnel by stage. 44 tests passing
+- `GET /stats` (`app/stats.py`, `routers/stats.py`): response rate, average days to first response, funnel by stage
 - Dockerfile (multi-stage, non-root) + full-stack docker-compose with a one-shot `migrate` service. Verified end to end in an isolated compose project
 - GitHub Actions CI (`.github/workflows/ci.yml`): ruff format --check → ruff check → pytest with a Postgres service → build image → push to GHCR on main. First GitHub run (2026-10-17) passed both jobs; the image is public at `ghcr.io/yonatan-gan/jobtrail-backend` (tags `latest`, `sha-<commit>`)
 - Bulk import `POST /applications/import` (`import_applications` in `app/services.py`): JSON list of job listings, companies matched by exact name or created, duplicate `job_url`s skipped (in the DB and within the file), optional `status: applied` goes through `change_status`, whole request is one transaction. Second migration `705550c1d083` adds the unique index on `applications.job_url`
-- Daily-workflow helpers: `make import` (newest file from ~/Downloads), `make applied URL=… [DATE=…]` (lookup via new `?job_url=` filter on `GET /applications`, then the normal status endpoint). Import now updates `saved` → `applied` for applied items and reports `updated`. 63 tests passing
+- Daily-workflow helpers: `make import` (newest file from ~/Downloads), `make applied URL=… [DATE=…]` (lookup via new `?job_url=` filter on `GET /applications`, then the normal status endpoint). Import now updates `saved` → `applied` for applied items and reports `updated`
+- History-order fix: `get_status_history()` always queries `ORDER BY changed_at, id`; backdating moves the saved row back; naive input datetimes are read as UTC
+- CORS from settings + `GET /meta/status-transitions`
+- Frontend phase 1: Vite scaffold, Tailwind, ESLint/Prettier, Vitest; typed API client with types generated from OpenAPI; React Router layout with navigation and placeholder pages
+- Tests: backend 74 (pytest), frontend 15 (Vitest)
+
+**Not done yet** (don't claim these)
+- Frontend phases 2–5: applications table/forms/detail page with status buttons, dashboard with charts, import and companies pages, more frontend tests, frontend Dockerfile + compose service, frontend CI job
+- No API for contacts / application_contacts (the tables exist, no endpoints)
+- No auth, no deployment (AWS/Terraform), no pagination
+- The CORS default only covers the Vite dev server
 
 **Next**
-- Terraform on AWS (see roadmap)
+- Frontend phase 2: applications (table with filters and search, add form, detail page with PATCH, status buttons from /meta/status-transitions, history timeline)
+- Then phases 3–5 (dashboard, import + companies, tests + Docker + CI), then Terraform on AWS
 
 **Roadmap**
-- Weeks 3–4: Terraform on AWS (VPC, ECS Fargate, RDS, ECR), CD on merge, GitHub OIDC (no long-lived keys), users/auth before deploying
-- Later: Kubernetes (kind/k3s locally), Prometheus/Grafana, Trivy + Dependabot, React dashboard
+- Terraform on AWS (VPC, ECS Fargate, RDS, ECR), CD on merge, GitHub OIDC (no long-lived keys), users/auth before deploying
+- Later: Kubernetes (kind/k3s locally), Prometheus/Grafana, Trivy + Dependabot
 
 ## Testing
 
@@ -168,7 +209,9 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
   - each test runs inside a transaction that is rolled back afterwards (`join_transaction_mode="create_savepoint"`), so tests are isolated
   - `app.dependency_overrides[get_db]` swaps in the test session
 - One-time setup: `docker compose exec db createdb -U jobtrail jobtrail_test`
-- Before committing: `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`
+- Tests share one session per test, so cached objects survive between requests. To test what a fresh request sees, call `db_session.expire_all()`.
+- Frontend tests (Vitest + Testing Library, jsdom) mock `fetch`; `src/test/render.tsx` wraps components in the query client and a MemoryRouter.
+- Before committing: `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`; in `frontend/`: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`
 
 ## Known gotchas
 
@@ -176,3 +219,7 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - `--reload` without `--reload-dir app` restarts endlessly because it watches `.venv`.
 - Alembic-generated migrations fail ruff, so `migrations/versions` is excluded in pyproject.toml. Always **read** generated migrations before applying them.
 - The pytest warning about `httpx` in Starlette's TestClient is a known library deprecation, not a bug in this repo.
+- The repo lives in iCloud-synced `~/Desktop`. When the disk fills up, macOS evicts file contents (`ls -lO` shows `dataless`) and imports, pytest and Docker hang. Free space, then read the files once to download them.
+- `~/.npm` contained root-owned files (EACCES on `npm install`). Fix once with `sudo chown -R 501:20 ~/.npm`.
+- `openapi-typescript` 7 declares a TypeScript 5 peer, so `gen:api` runs it through `npx` instead of installing it next to TypeScript 6.
+- Headless Chrome on this Mac renders pages but exits slowly; run it in the background with a separate `--user-data-dir`.
