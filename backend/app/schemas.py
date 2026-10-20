@@ -1,9 +1,19 @@
-from datetime import datetime
-from typing import Literal, Self
+from datetime import UTC, datetime
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from app.enums import EmploymentType, Level, PositionType, Source, Status, WorkMode
+
+
+def assume_utc(value: datetime) -> datetime:
+    """Read a datetime without a time zone as UTC, so all datetimes can be compared."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+# An input datetime that is always timezone-aware. Postgres runs in UTC, so a value
+# without an offset was already stored as UTC; this makes Python agree with it.
+UtcDatetime = Annotated[datetime, AfterValidator(assume_utc)]
 
 
 class CompanyCreate(BaseModel):
@@ -95,7 +105,7 @@ class ApplicationRead(BaseModel):
 
 class StatusChangeCreate(BaseModel):
     to_status: Status
-    changed_at: datetime | None = None
+    changed_at: UtcDatetime | None = None
     note: str | None = None
 
 
@@ -122,7 +132,7 @@ class ApplicationImportItem(BaseModel):
     skills: list[str] = Field(default_factory=list)
     notes: str | None = None
     status: Literal[Status.SAVED, Status.APPLIED] = Status.SAVED
-    applied_at: datetime | None = None
+    applied_at: UtcDatetime | None = None
 
     @model_validator(mode="after")
     def check_applied_at(self) -> Self:

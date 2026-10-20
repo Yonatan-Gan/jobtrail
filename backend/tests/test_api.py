@@ -2,9 +2,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app import services
 from app.enums import Status
+from app.models import Application
 from app.services import InvalidTransitionError
 
 
@@ -382,3 +384,96 @@ def test_mark_applied_by_job_url(client: TestClient) -> None:
     assert updated["status"] == "applied"
     assert datetime.fromisoformat(updated["applied_at"]) == datetime(2026, 10, 19, 9, tzinfo=UTC)
     assert client.post(status_url, json={"to_status": "applied"}).status_code == 409
+
+
+def timeline(client: TestClient, app_id: int) -> list[tuple[str, datetime]]:
+    """The history as (status, changed_at) pairs, in the order the API returns them."""
+    history = client.get(f"/applications/{app_id}/history").json()
+    return [(h["to_status"], datetime.fromisoformat(h["changed_at"])) for h in history]
+
+
+def test_backdated_applied_moves_saved_row_back_and_order_is_stable(
+    client: TestClient, db_session: Session
+) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    applied_at = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)  # before the application was created
+
+    response = client.post(
+        f"/applications/{app_id}/status",
+        json={"to_status": "applied", "changed_at": applied_at.isoformat()},
+    )
+    assert response.status_code == 201
+
+    expected = [("saved", applied_at), ("applied", applied_at)]
+    assert timeline(client, app_id) == expected
+    db_session.expire_all()  # forget the session cache, like a new request in production
+    assert timeline(client, app_id) == expected
+
+
+def test_saved_row_is_kept_when_applied_after_saving(client: TestClient) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    [(_, saved_at)] = timeline(client, app_id)
+    applied_at = saved_at + timedelta(hours=1)
+
+    response = client.post(
+        f"/applications/{app_id}/status",
+        json={"to_status": "applied", "changed_at": applied_at.isoformat()},
+    )
+    assert response.status_code == 201
+
+    assert timeline(client, app_id) == [("saved", saved_at), ("applied", applied_at)]
+
+
+def test_history_is_ordered_by_time_not_by_insertion(
+    client: TestClient, db_session: Session
+) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    # Keep the application in the session cache, as earlier code in the same session would.
+    # Without this, garbage collection decides whether the cache survives: a flaky test.
+    cached = db_session.get(Application, app_id)
+    status_url = f"/applications/{app_id}/status"
+    now = datetime.now(UTC)
+    # "screening" is recorded last, but dated an hour before "applied".
+    for status, hours in [("applied", 2), ("screening", 1)]:
+        changed_at = (now + timedelta(hours=hours)).isoformat()
+        response = client.post(status_url, json={"to_status": status, "changed_at": changed_at})
+        assert response.status_code == 201
+
+    # The trap: the cached list is in insertion order...
+    assert [row.to_status for row in cached.status_changes] == ["saved", "applied", "screening"]
+    # ...but the API always returns time order.
+    expected = ["saved", "screening", "applied"]
+    assert [status for status, _ in timeline(client, app_id)] == expected
+    db_session.expire_all()
+    assert [status for status, _ in timeline(client, app_id)] == expected
+
+
+def test_import_applied_item_moves_saved_row_back(client: TestClient) -> None:
+    url = "https://jobs.example/1"
+    import_items(client, [import_item(url)])
+    applied_at = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+
+    import_items(client, [import_item(url, status="applied", applied_at=applied_at.isoformat())])
+
+    [application] = client.get("/applications").json()
+    assert timeline(client, application["id"]) == [
+        ("saved", applied_at),
+        ("applied", applied_at),
+    ]
+
+
+def test_changed_at_without_time_zone_is_read_as_utc(client: TestClient) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+
+    response = client.post(
+        f"/applications/{app_id}/status",
+        json={"to_status": "applied", "changed_at": "2026-10-01T09:00:00"},
+    )
+
+    assert response.status_code == 201
+    applied_at = client.get(f"/applications/{app_id}").json()["applied_at"]
+    assert datetime.fromisoformat(applied_at) == datetime(2026, 10, 1, 9, 0, tzinfo=UTC)

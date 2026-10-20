@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.enums import Status
 from app.models import Application, Company, StatusChange
-from app.schemas import ApplicationImportItem, ImportResult
+from app.schemas import ApplicationImportItem, ImportResult, assume_utc
 from app.status_rules import can_transition
 
 # Service functions change objects in the session but never commit.
@@ -25,10 +25,25 @@ def new_application(fields: dict[str, Any], saved_at: datetime | None = None) ->
         StatusChange(
             from_status=None,
             to_status=Status.SAVED,
-            changed_at=saved_at or datetime.now(UTC),
+            changed_at=assume_utc(saved_at) if saved_at else datetime.now(UTC),
         )
     )
     return application
+
+
+def get_status_history(db: Session, application_id: int) -> list[StatusChange]:
+    """The status history of one application, oldest first.
+
+    Always query with an explicit ORDER BY. Within one session, application.status_changes
+    can still be in insertion order, so reading it directly gives an order that depends on
+    the session cache. Rows with the same changed_at keep insertion order (id).
+    """
+    stmt = (
+        select(StatusChange)
+        .where(StatusChange.application_id == application_id)
+        .order_by(StatusChange.changed_at, StatusChange.id)
+    )
+    return list(db.scalars(stmt))
 
 
 def change_status(
@@ -40,7 +55,7 @@ def change_status(
     if not can_transition(application.status, new_status):
         raise InvalidTransitionError(application.status, new_status)
 
-    when = changed_at or datetime.now(UTC)
+    when = assume_utc(changed_at) if changed_at else datetime.now(UTC)
     change = StatusChange(
         from_status=application.status,
         to_status=new_status,
@@ -49,9 +64,23 @@ def change_status(
     )
     application.status_changes.append(change)
     application.status = new_status
-    if new_status == Status.APPLIED and application.applied_at is None:
-        application.applied_at = when
+    if new_status == Status.APPLIED:
+        if application.applied_at is None:
+            application.applied_at = when
+        move_saved_row_back(application, when)
     return change
+
+
+def move_saved_row_back(application: Application, applied_at: datetime) -> None:
+    """You can't apply before saving: if the application was applied earlier than its
+    "saved" row (applied on Monday, added to JobTrail on Wednesday), move that row back.
+
+    This searches the rows instead of ordering them, so it uses the relationship: it must
+    also see rows that are not in the database yet, such as during an import.
+    """
+    for row in application.status_changes:
+        if row.to_status == Status.SAVED and row.changed_at > applied_at:
+            row.changed_at = applied_at
 
 
 def import_applications(db: Session, items: list[ApplicationImportItem]) -> ImportResult:

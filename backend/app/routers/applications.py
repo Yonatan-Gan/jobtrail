@@ -19,6 +19,7 @@ from app.schemas import (
 from app.services import (
     InvalidTransitionError,
     change_status,
+    get_status_history,
     import_applications,
     new_application,
 )
@@ -131,4 +132,5 @@ def update_status(application_id: int, payload: StatusChangeCreate, db: DbSessio
 
 @router.get("/{application_id}/history", response_model=list[StatusChangeRead])
 def get_history(application_id: int, db: DbSession) -> list[StatusChange]:
-    return get_application_or_404(db, application_id).status_changes
+    get_application_or_404(db, application_id)
+    return get_status_history(db, application_id)

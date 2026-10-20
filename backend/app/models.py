@@ -84,6 +84,8 @@ class Application(CreatedAtMixin, Base):
     )
 
     company: Mapped["Company"] = relationship(back_populates="applications")
+    # Used to add history rows. To READ history in order, use services.get_status_history():
+    # rows added in the current session stay in insertion order in this list.
     status_changes: Mapped[list["StatusChange"]] = relationship(
         back_populates="application",
         cascade="all, delete-orphan",
