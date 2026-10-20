@@ -33,6 +33,7 @@ Job-search management API: track companies, applications, contacts and every sta
 | `POST` | `/applications/{id}/status` | Change status (validated) |
 | `GET` | `/applications/{id}/history` | Status history |
 | `GET` | `/stats` | Response rate, average days to first response, funnel by stage |
+| `GET` | `/meta/status-transitions` | Allowed next statuses for every status, so clients never copy the rules |
 
 Interactive docs: http://localhost:8000/docs
 
