@@ -8,5 +8,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
+    // The same time zone on every machine (CI runs in UTC), so date tests are stable.
+    env: { TZ: "UTC" },
   },
 });

@@ -1,7 +1,9 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentProps } from "react";
 import { buttonClasses, type ButtonVariant } from "./buttonStyles";
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+// ComponentProps<"button"> is every prop a <button> takes, including `ref`
+// (in React 19 a ref is an ordinary prop, so no forwardRef is needed).
+interface ButtonProps extends ComponentProps<"button"> {
   variant?: ButtonVariant;
 }
 

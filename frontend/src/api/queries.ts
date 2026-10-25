@@ -7,6 +7,7 @@ import type { ApplicationFilters } from "./types";
 // page and every history at once.
 export const queryKeys = {
   applications: ["applications"] as const,
+  applicationLists: ["applications", "list"] as const,
   applicationList: (filters: ApplicationFilters) =>
     ["applications", "list", filters] as const,
   application: (id: number) => ["applications", "detail", id] as const,

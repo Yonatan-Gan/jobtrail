@@ -3,12 +3,14 @@ import { useCompanies } from "../api/queries";
 import { ApplicationFiltersBar } from "../components/applications/ApplicationFiltersBar";
 import { ApplicationResults } from "../components/applications/ApplicationResults";
 import { buttonClasses } from "../components/buttonStyles";
+import { Notice } from "../components/Notice";
 import { PageHeader } from "../components/PageHeader";
 import {
   filtersFromParams,
   paramsFromFilters,
   type ListFilters,
 } from "../lib/listFilters";
+import { useFlashNotice } from "../lib/useFlashNotice";
 
 // The home page. This component owns the filters (they live in the URL); the results
 // component below does the data loading.
@@ -16,6 +18,7 @@ export function ApplicationsPage() {
   const [params, setParams] = useSearchParams();
   const filters = filtersFromParams(params);
   const companies = useCompanies();
+  const [flash, dismissFlash] = useFlashNotice();
 
   function setFilter(name: keyof ListFilters, value: string) {
     const next = new URLSearchParams(params);
@@ -51,6 +54,11 @@ export function ApplicationsPage() {
           </>
         }
       />
+      {flash && (
+        <Notice tone="success" className="mb-4" onDismiss={dismissFlash}>
+          {flash}
+        </Notice>
+      )}
       <ApplicationFiltersBar
         filters={filters}
         companies={companies.data ?? []}

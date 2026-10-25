@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
+import { ApplicationDetailPage } from "./pages/ApplicationDetailPage";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -14,6 +15,7 @@ export default function App() {
         {/* The applications list is the home page. */}
         <Route index element={<Navigate to="/applications" replace />} />
         <Route path="applications" element={<ApplicationsPage />} />
+        <Route path="applications/:id" element={<ApplicationDetailPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="companies" element={<CompaniesPage />} />
