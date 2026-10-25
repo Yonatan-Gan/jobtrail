@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+# Local env files can hold machine-specific values; the image gets VITE_API_URL as a
+# build argument instead.
+.env*
+Dockerfile
+.dockerignore
+**/.DS_Store
