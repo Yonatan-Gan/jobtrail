@@ -1,4 +1,5 @@
-import { Link, NavLink, Outlet } from "react-router";
+import { useEffect, useRef } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { ApiStatus } from "./ApiStatus";
 
 // "Applications" stays highlighted on /applications/new and /applications/42 too.
@@ -18,6 +19,21 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 }
 
 export function Layout() {
+  const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  const previousPath = useRef(location.pathname);
+
+  // In a single-page app the browser doesn't reload on navigation, so keyboard focus
+  // would stay where the old page's link was. Move it to the new page's <main> instead,
+  // like a real page load would. Only the path counts: typing in the search box changes
+  // just the query string and must not steal focus.
+  useEffect(() => {
+    if (previousPath.current !== location.pathname) {
+      previousPath.current = location.pathname;
+      mainRef.current?.focus();
+    }
+  }, [location.pathname]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <a
@@ -50,6 +66,7 @@ export function Layout() {
       </header>
       <main
         id="main"
+        ref={mainRef}
         tabIndex={-1}
         className="mx-auto max-w-6xl px-4 py-8 focus:outline-none"
       >

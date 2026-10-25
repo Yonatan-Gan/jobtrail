@@ -53,4 +53,22 @@ describe("App", () => {
     renderWithProviders(<App />, { route: "/dashboard" });
     expect(await screen.findByText("API unreachable")).toBeInTheDocument();
   });
+
+  it("moves focus to the main content after navigating, not when filtering", async () => {
+    mockApi();
+    const { user } = renderWithProviders(<App />, { route: "/applications" });
+    const main = screen.getByRole("main");
+
+    await user.type(
+      await screen.findByLabelText("Search company or title"),
+      "acme",
+    );
+    expect(screen.getByLabelText("Search company or title")).toHaveFocus();
+
+    await user.click(screen.getByRole("link", { name: "Dashboard" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dashboard" }),
+    ).toBeInTheDocument();
+    expect(main).toHaveFocus();
+  });
 });
