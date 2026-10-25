@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+@theme {
+  /* The one chart colour (dataviz reference palette, slot 1). Checked against the
+     white card: inside the lightness band, enough chroma, at least 3:1 contrast. */
+  --color-series-1: #2a78d6;
+}
+
 @layer base {
   /* A clear focus ring for keyboard users on everything that can be focused. */
   :where(
