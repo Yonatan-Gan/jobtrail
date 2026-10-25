@@ -190,8 +190,8 @@ describe("ApplicationDetailPage", () => {
     await user.click(
       await screen.findByRole("button", { name: "Edit details" }),
     );
+    expect(screen.getByRole("heading", { name: "Edit details" })).toHaveFocus();
     const title = screen.getByLabelText(/Job title/);
-    expect(title).toHaveFocus();
     await user.clear(title);
     await user.type(title, "Backend Developer");
     await user.clear(screen.getByLabelText("City"));

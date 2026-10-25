@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type Ref } from "react";
 import { flushSync } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router";
 import { ApiError, describeError } from "../api/client";
@@ -87,14 +87,24 @@ function LoadedApplication({ application }: { application: Application }) {
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const editButtonRef = useRef<HTMLButtonElement>(null);
+  const editHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const companyName =
     companies.data?.find((company) => company.id === application.company_id)
       ?.name ?? "…";
   const fit = parseFit(application.notes);
 
-  // Leave edit mode and put the keyboard focus back on the "Edit details" button.
-  // flushSync renders right away, so the button exists before we focus it.
+  // Keyboard focus follows the change: into the form's heading when editing starts,
+  // back to the "Edit details" button when it ends. flushSync renders right away, so
+  // the element exists before we focus it.
+  function startEditing() {
+    flushSync(() => {
+      setEditing(true);
+      setMessage(null);
+    });
+    editHeadingRef.current?.focus();
+  }
+
   function stopEditing(notice: string | null) {
     flushSync(() => {
       setEditing(false);
@@ -167,7 +177,7 @@ function LoadedApplication({ application }: { application: Application }) {
         actions={
           editing ? undefined : (
             <>
-              <Button ref={editButtonRef} onClick={() => setEditing(true)}>
+              <Button ref={editButtonRef} onClick={startEditing}>
                 Edit details
               </Button>
               <Button
@@ -200,7 +210,11 @@ function LoadedApplication({ application }: { application: Application }) {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           {editing ? (
-            <Card title="Edit details" headingId="edit-heading">
+            <Card
+              title="Edit details"
+              headingId="edit-heading"
+              headingRef={editHeadingRef}
+            >
               <ApplicationForm
                 initialValues={formValuesFrom(application)}
                 companies={companies.data ?? []}
@@ -212,7 +226,6 @@ function LoadedApplication({ application }: { application: Application }) {
                     ? update.error.existingId
                     : null
                 }
-                autoFocus
                 onSubmit={handleSave}
                 onCancel={() => {
                   update.reset();
@@ -308,10 +321,13 @@ function LoadedApplication({ application }: { application: Application }) {
 function Card({
   title,
   headingId,
+  headingRef,
   children,
 }: {
   title: string;
   headingId: string;
+  /** Lets the page move keyboard focus to this heading (tabIndex -1 makes that possible). */
+  headingRef?: Ref<HTMLHeadingElement>;
   children: ReactNode;
 }) {
   return (
@@ -319,7 +335,12 @@ function Card({
       aria-labelledby={headingId}
       className="rounded-lg border border-slate-200 bg-white p-4"
     >
-      <h2 id={headingId} className="mb-3 text-lg font-semibold">
+      <h2
+        id={headingId}
+        ref={headingRef}
+        tabIndex={headingRef ? -1 : undefined}
+        className="mb-3 text-lg font-semibold focus:outline-none"
+      >
         {title}
       </h2>
       {children}

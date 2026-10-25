@@ -50,7 +50,7 @@ describe("buildUpdatePayload", () => {
 
 describe("buildCreatePayload", () => {
   it("lists the required fields that are still empty", () => {
-    expect(buildCreatePayload(EMPTY_FORM, 1)).toEqual({
+    expect(buildCreatePayload(EMPTY_FORM)).toEqual({
       errors: {
         title: "Enter the job title.",
         position_type: "Choose a position type.",
@@ -60,18 +60,14 @@ describe("buildCreatePayload", () => {
   });
 
   it("builds the POST body, with empty optional fields as null", () => {
-    const result = buildCreatePayload(
-      {
-        ...EMPTY_FORM,
-        title: "Data Engineer",
-        position_type: "data",
-        source: "referral",
-        skills: "sql, python",
-      },
-      7,
-    );
+    const result = buildCreatePayload({
+      ...EMPTY_FORM,
+      title: "Data Engineer",
+      position_type: "data",
+      source: "referral",
+      skills: "sql, python",
+    });
     expect(result.payload).toEqual({
-      company_id: 7,
       title: "Data Engineer",
       position_type: "data",
       level: "junior",

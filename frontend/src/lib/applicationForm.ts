@@ -115,17 +115,20 @@ function parse(values: ApplicationFormValues): ParsedForm {
   };
 }
 
+/** POST /applications's body without company_id: a new company may not exist yet. */
+export type CreatePayload = Omit<ApplicationCreate, "company_id">;
+
 export type CreateResult =
-  | { payload: ApplicationCreate; errors?: undefined }
+  | { payload: CreatePayload; errors?: undefined }
   | { payload?: undefined; errors: Record<string, string> };
 
 /**
- * The body for POST /applications, or messages for the required fields that are still
- * empty. (The inputs are `required` too; this keeps TypeScript and the API honest.)
+ * The body for POST /applications (minus the company), or messages for the required
+ * fields that are still empty. The inputs are `required` too; this keeps TypeScript
+ * and the API honest.
  */
 export function buildCreatePayload(
   values: ApplicationFormValues,
-  companyId: number,
 ): CreateResult {
   const form = parse(values);
   const errors: Record<string, string> = {};
@@ -155,7 +158,6 @@ export function buildCreatePayload(
   }
   return {
     payload: {
-      company_id: companyId,
       title: form.title,
       position_type: form.position_type,
       level: form.level,

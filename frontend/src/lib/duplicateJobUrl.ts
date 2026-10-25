@@ -1,13 +1,14 @@
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
+import { FieldErrors } from "./apiErrors";
 
 /** A save failed because another application already has this job URL. */
-export class DuplicateJobUrlError extends Error {
+export class DuplicateJobUrlError extends FieldErrors {
   /** The application that already has the URL, when it could be found. */
   readonly existingId: number | null;
 
   constructor(existingId: number | null) {
-    super("Another application already has this job URL.");
+    super({ job_url: "Another application already has this job URL." });
     this.name = "DuplicateJobUrlError";
     this.existingId = existingId;
   }

@@ -34,7 +34,6 @@ interface ApplicationFormProps {
   duplicateOf?: number | null;
   /** Offer "New company…" in the company picker (the add page does). */
   allowNewCompany?: boolean;
-  autoFocus?: boolean;
   onSubmit: (
     values: ApplicationFormValues,
     newCompanyName: string | null,
@@ -54,7 +53,6 @@ export function ApplicationForm({
   errors,
   duplicateOf = null,
   allowNewCompany = false,
-  autoFocus = false,
   onSubmit,
   onCancel,
 }: ApplicationFormProps) {
@@ -110,13 +108,12 @@ export function ApplicationForm({
             value={newCompanyName}
             onChange={(event) => setNewCompanyName(event.target.value)}
             error={errors.fields.new_company_name}
-            hint="Created when you save."
+            hint="Created when you save. If a company with exactly this name exists, that one is used."
           />
         )}
         <TextField
           label="Job title"
           required
-          autoFocus={autoFocus}
           maxLength={200}
           {...field("title")}
           className="sm:col-span-2"

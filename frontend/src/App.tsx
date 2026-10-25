@@ -5,6 +5,7 @@ import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ImportPage } from "./pages/ImportPage";
+import { NewApplicationPage } from "./pages/NewApplicationPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
         {/* The applications list is the home page. */}
         <Route index element={<Navigate to="/applications" replace />} />
         <Route path="applications" element={<ApplicationsPage />} />
+        <Route path="applications/new" element={<NewApplicationPage />} />
         <Route path="applications/:id" element={<ApplicationDetailPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="import" element={<ImportPage />} />

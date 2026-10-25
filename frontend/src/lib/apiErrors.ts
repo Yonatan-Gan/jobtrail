@@ -1,6 +1,16 @@
 import { ApiError, describeError } from "../api/client";
 import type { ValidationError } from "../api/types";
-import { DuplicateJobUrlError } from "./duplicateJobUrl";
+
+/** Problems found before or around a request, keyed by the form field they belong to. */
+export class FieldErrors extends Error {
+  readonly fields: Record<string, string>;
+
+  constructor(fields: Record<string, string>) {
+    super(Object.values(fields).join(" "));
+    this.name = "FieldErrors";
+    this.fields = fields;
+  }
+}
 
 export interface FormErrors {
   /** Messages for single fields, keyed by field name ("title", "job_url"). */
@@ -35,8 +45,8 @@ export function cleanMessage(message: string): string {
  * to their fields (loc ["body", "title"] → "title"); everything else is one form message.
  */
 export function formErrors(error: unknown): FormErrors {
-  if (error instanceof DuplicateJobUrlError) {
-    return { fields: { job_url: error.message }, form: null };
+  if (error instanceof FieldErrors) {
+    return { fields: error.fields, form: null };
   }
   if (error instanceof ApiError && isValidationErrorList(error.detail)) {
     const fields: Record<string, string> = {};
