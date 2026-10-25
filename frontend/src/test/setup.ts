@@ -32,6 +32,9 @@ if (!dialogPrototype.showModal) {
   });
 }
 
+// jsdom doesn't do layout, so it has no scrolling (it would log "not implemented").
+window.scrollTo = () => {};
+
 beforeEach(() => {
   // Tests mock the API client. A real request means a test forgot to mock something.
   vi.stubGlobal(

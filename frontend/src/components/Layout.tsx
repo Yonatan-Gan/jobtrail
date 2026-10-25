@@ -23,14 +23,16 @@ export function Layout() {
   const mainRef = useRef<HTMLElement>(null);
   const previousPath = useRef(location.pathname);
 
-  // In a single-page app the browser doesn't reload on navigation, so keyboard focus
-  // would stay where the old page's link was. Move it to the new page's <main> instead,
-  // like a real page load would. Only the path counts: typing in the search box changes
-  // just the query string and must not steal focus.
+  // In a single-page app the browser doesn't reload on navigation, so the scroll
+  // position and keyboard focus would stay where the old page left them. Do what a real
+  // page load does: start at the top, with focus at the start of the new page's <main>.
+  // Only the path counts: typing in the search box changes just the query string and
+  // must not steal focus.
   useEffect(() => {
     if (previousPath.current !== location.pathname) {
       previousPath.current = location.pathname;
-      mainRef.current?.focus();
+      window.scrollTo(0, 0);
+      mainRef.current?.focus({ preventScroll: true });
     }
   }, [location.pathname]);
 
