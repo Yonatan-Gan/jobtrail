@@ -9,10 +9,10 @@ export function NotFoundPage() {
         description="There is no page at this address."
       />
       <Link
-        to="/"
+        to="/applications"
         className="font-medium text-slate-900 underline underline-offset-4"
       >
-        Back to the dashboard
+        Back to the applications
       </Link>
     </>
   );

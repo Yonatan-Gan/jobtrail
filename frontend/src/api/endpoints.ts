@@ -6,7 +6,7 @@ import type {
   ApplicationUpdate,
   Company,
   CompanyCreate,
-  ImportItem,
+  CompanyUpdate,
   ImportResult,
   Stats,
   StatusChange,
@@ -37,7 +37,9 @@ export const api = {
     }),
   history: (id: number) =>
     request<StatusChange[]>(`/applications/${id}/history`),
-  importApplications: (items: ImportItem[]) =>
+  // The items come straight from a file the user picked, so they are `unknown` here:
+  // the backend validates every field and answers 422 when something is wrong.
+  importApplications: (items: unknown[]) =>
     request<ImportResult>("/applications/import", {
       method: "POST",
       body: items,
@@ -47,4 +49,8 @@ export const api = {
   getCompany: (id: number) => request<Company>(`/companies/${id}`),
   createCompany: (body: CompanyCreate) =>
     request<Company>("/companies", { method: "POST", body }),
+  updateCompany: (id: number, body: CompanyUpdate) =>
+    request<Company>(`/companies/${id}`, { method: "PATCH", body }),
+  deleteCompany: (id: number) =>
+    request<void>(`/companies/${id}`, { method: "DELETE" }),
 };

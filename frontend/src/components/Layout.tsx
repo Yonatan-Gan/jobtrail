@@ -1,11 +1,12 @@
-import { NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet } from "react-router";
 import { ApiStatus } from "./ApiStatus";
 
+// "Applications" stays highlighted on /applications/new and /applications/42 too.
 const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", end: true },
-  { to: "/applications", label: "Applications", end: false },
-  { to: "/companies", label: "Companies", end: false },
-  { to: "/import", label: "Import", end: false },
+  { to: "/applications", label: "Applications" },
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/import", label: "Import" },
+  { to: "/companies", label: "Companies" },
 ];
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
@@ -27,13 +28,15 @@ export function Layout() {
       </a>
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-8 gap-y-3 px-4 py-3">
-          <span className="text-lg font-semibold">JobTrail</span>
+          <Link to="/applications" className="text-lg font-semibold">
+            JobTrail
+          </Link>
           <nav aria-label="Main">
             <ul className="flex flex-wrap gap-1">
               {NAV_ITEMS.map((item) => (
                 <li key={item.to}>
                   {/* NavLink sets aria-current="page" on the active link. */}
-                  <NavLink to={item.to} end={item.end} className={navLinkClass}>
+                  <NavLink to={item.to} className={navLinkClass}>
                     {item.label}
                   </NavLink>
                 </li>

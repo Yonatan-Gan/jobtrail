@@ -7,8 +7,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  // schema.d.ts is generated from the backend's OpenAPI schema (npm run gen:api).
-  globalIgnores(["dist", "src/api/schema.d.ts"]),
+  // schema.ts is generated from the backend's OpenAPI schema (npm run gen:api).
+  globalIgnores(["dist", "src/api/schema.ts"]),
   {
     files: ["**/*.{ts,tsx}"],
     extends: [

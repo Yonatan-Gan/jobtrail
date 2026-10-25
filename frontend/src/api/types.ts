@@ -1,6 +1,17 @@
-// Readable names for the generated types. schema.d.ts is generated from the backend's
+// Readable names for the generated types. schema.ts is generated from the backend's
 // OpenAPI schema (npm run gen:api), so these always match the Pydantic models.
 import type { components, paths } from "./schema";
+
+// The allowed values of each enum, as arrays you can loop over (for <select> options).
+// Also generated, so a new status in the backend appears here after `npm run gen:api`.
+export {
+  employmentTypeValues,
+  levelValues,
+  positionTypeValues,
+  sourceValues,
+  statusValues,
+  workModeValues,
+} from "./schema";
 
 type Schemas = components["schemas"];
 
@@ -13,6 +24,7 @@ export type Source = Schemas["Source"];
 
 export type Company = Schemas["CompanyRead"];
 export type CompanyCreate = Schemas["CompanyCreate"];
+export type CompanyUpdate = Schemas["CompanyUpdate"];
 export type Application = Schemas["ApplicationRead"];
 export type ApplicationCreate = Schemas["ApplicationCreate"];
 export type ApplicationUpdate = Schemas["ApplicationUpdate"];

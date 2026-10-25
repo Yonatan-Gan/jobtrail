@@ -927,3 +927,18 @@ export interface operations {
         };
     };
 }
+type FlattenedDeepRequired<T> = {
+    [K in keyof T]-?: FlattenedDeepRequired<T[K] extends unknown[] | undefined | null ? Extract<T[K], unknown[]>[number] : T[K]>;
+};
+type ReadonlyArray<T> = [
+    Exclude<T, undefined>
+] extends [
+    unknown[]
+] ? Readonly<Exclude<T, undefined>> : Readonly<Exclude<T, undefined>[]>;
+export const applicationImportItemStatusValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApplicationImportItem"]["status"]> = ["saved", "applied"];
+export const employmentTypeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["EmploymentType"]> = ["full_time", "part_time", "student"];
+export const levelValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["Level"]> = ["intern", "junior", "mid"];
+export const positionTypeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["PositionType"]> = ["backend", "frontend", "fullstack", "devops", "data", "qa", "other"];
+export const sourceValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["Source"]> = ["linkedin", "company_site", "referral", "job_board", "recruiter", "other"];
+export const statusValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["Status"]> = ["saved", "applied", "screening", "assignment", "technical", "final", "offer", "accepted", "declined", "rejected", "withdrawn", "ghosted"];
+export const workModeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["WorkMode"]> = ["onsite", "hybrid", "remote"];
