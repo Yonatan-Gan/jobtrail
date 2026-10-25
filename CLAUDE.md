@@ -25,14 +25,15 @@ The project is also meant to **show DevOps skills**: containerization, CI/CD, in
 - **Database:** PostgreSQL 16 (Docker Compose for local dev)
 - **Tooling:** `uv` (package manager), pytest + httpx, ruff (line length 100)
 - **Frontend:** React 19 + TypeScript 6 with Vite 8, TanStack Query 5, React Router 7, Tailwind CSS 4, Vitest 5 + Testing Library (jsdom 29), ESLint + Prettier. Node 22.13+ (React Router 8 / jsdom 30 would need Node 22.22+)
-- **Done:** Dockerfile, docker-compose stack, GitHub Actions CI (backend). **Planned:** frontend phases 2–5, Terraform on AWS
+- **Done:** Dockerfiles (backend, frontend with nginx), docker-compose stack (db, migrate, api, web), GitHub Actions CI (backend + frontend). **Planned:** Terraform on AWS
 
 ## Repo layout
 
 ```
 jobtrail/
-├── .github/workflows/ci.yml CI: ruff + pytest (Postgres service) → build image, push to GHCR on main
-├── docker-compose.yml        Postgres 16 "db" (user/pass/db: jobtrail, volume pgdata), one-shot "migrate", and "api"
+├── .github/workflows/ci.yml CI: backend (ruff + pytest with a Postgres service), frontend (format, lint, typecheck, test, build) → backend image to GHCR on main
+├── docker-compose.yml        "db" (Postgres 16, volume pgdata) → one-shot "migrate" → "api" (:8000) → "web" (nginx, :8080); env VITE_API_URL, CORS_ORIGINS
+├── screenshots/              README screenshots (fake sample data)
 ├── Makefile                  `make import` → scripts/import_latest.sh, `make applied URL=… [DATE=…]` → scripts/mark_applied.sh
 ├── scripts/
 │   ├── import_latest.sh      posts the newest ~/Downloads/jobtrail_{import,applied}_*.json to /applications/import
@@ -42,11 +43,19 @@ jobtrail/
 ├── frontend/                 React + TypeScript (Vite); see frontend/README.md
 │   ├── package.json          scripts: dev, build, lint, typecheck, test, format:check, gen:api
 │   ├── .env.development      VITE_API_URL for `npm run dev` (.env.test for Vitest)
+│   ├── Dockerfile            multi-stage: Node build → nginx-unprivileged (uid 101, :8080); VITE_API_URL build arg
+│   ├── nginx.conf            SPA fallback to index.html, immutable caching for /assets, no-cache index.html, gzip
 │   └── src/
-│       ├── api/              schema.d.ts (generated, don't edit), types.ts, client.ts (request, ApiError), endpoints.ts, queryClient.ts
-│       ├── components/       Layout (nav, skip link), PageHeader (<title>), ApiStatus
-│       ├── pages/            Dashboard, Applications, Companies, Import (placeholders), NotFound
-│       └── test/             setup.ts, render.tsx (renderWithProviders)
+│       ├── api/              schema.ts (generated with --enum-values, don't edit), types.ts, client.ts (request, ApiError),
+│       │                     endpoints.ts (api.*), queries.ts (queryKeys, useX hooks, useRefreshApplications), queryClient.ts
+│       ├── pages/            ApplicationsPage (home), ApplicationDetailPage, NewApplicationPage, ImportPage, CompaniesPage,
+│       │                     DashboardPage, NotFoundPage
+│       ├── components/       Layout (nav, skip link, focus/scroll on navigation), Dialog (native <dialog>), ConfirmDialog,
+│       │                     FormFields, Button, badges, Notice, QueryStates; folders applications/, companies/,
+│       │                     importing/, dashboard/
+│       ├── lib/              plain functions: listFilters (URL ↔ filters), applicationForm/companyForm (form ↔ API),
+│       │                     apiErrors (FieldErrors, formErrors), duplicateJobUrl, importFile, fit, format, dates, status
+│       └── test/             setup.ts (dialog stand-in, fetch guard, TZ), render.tsx, fixtures.ts, mockApi.ts
 └── backend/
     ├── Dockerfile            multi-stage (uv builder → slim runtime), non-root user, read-only code
     ├── .dockerignore         keeps .venv, .env, caches and tests out of the build
@@ -90,7 +99,7 @@ docker compose ps
 docker compose exec db psql -U jobtrail -c '\dt'
 ```
 
-`docker compose up --build` runs the whole stack (db → migrate → api on port 8000). Stop any local uvicorn first, because both use port 8000.
+`docker compose up --build` runs the whole stack: db → migrate → api on :8000 → web (nginx) on http://localhost:8080. Stop any local uvicorn first, because both use port 8000. `VITE_API_URL` (build arg, default http://localhost:8000) and `CORS_ORIGINS` (JSON list, default 8080 + 5173) come from the environment; a new `VITE_API_URL` needs `--build`.
 
 `make import` (repo root, API running) imports the newest `jobtrail_import_*.json` / `jobtrail_applied_*.json` from `~/Downloads`. `make applied URL='<job_url>' [DATE=YYYY-MM-DD]` marks one application as applied through the API. Override with `JOBTRAIL_IMPORT_DIR` / `JOBTRAIL_API_URL`. The scripts target macOS (bash 3.2, BSD `date`, `jq`), so no bash 4+ features.
 
@@ -118,7 +127,7 @@ npm run build
 npm run gen:api
 ```
 
-`npm run dev` serves http://localhost:5173 and calls the API at `VITE_API_URL` (http://localhost:8000). `npm run gen:api` regenerates `src/api/schema.d.ts` from the running API; do it after changing backend schemas.
+`npm run dev` serves http://localhost:5173 and calls the API at `VITE_API_URL` (http://localhost:8000). `npm run gen:api` regenerates `src/api/schema.ts` (types + enum value arrays) from the running API; do it after changing backend schemas.
 
 ## Data model
 
@@ -145,6 +154,17 @@ Five tables. `applications` stores the **current state**; `status_changes` store
 - **Backdating:** moving to `applied` with a time earlier than the `saved` row moves the saved row back to that time, so history never shows applied before saved.
 - **Input datetimes without a time zone are read as UTC** (`UtcDatetime` in schemas.py). Postgres runs in UTC, and aware datetimes can be compared safely.
 - **CORS** origins come from settings (`CORS_ORIGINS`), never hard-coded. Status rules reach the frontend through `GET /meta/status-transitions`; the frontend must not copy them.
+
+### Frontend conventions
+
+- **Types come from the backend:** `npm run gen:api` → `src/api/schema.ts`; `types.ts` only renames. Dropdown options use the generated value arrays (`statusValues`, …). "Final" statuses are derived from `/meta/status-transitions` (no allowed moves), never hard-coded.
+- **One HTTP layer:** pages call `api.*` (endpoints.ts) through TanStack Query; reads use the hooks in `queries.ts`. Query keys start with the resource (`["applications", …]`), so after a change `useRefreshApplications()` invalidates lists, details, history and stats in one go.
+- **Mutations** use `useMutation`; errors become field messages with `formErrors()` (422 `loc` → field; `FieldErrors` for client checks, duplicate job URL and taken company names) and appear next to the field.
+- **PATCH sends only changed fields** (`buildUpdatePayload`, `companyUpdatePayload`): both sides go through the same parse, so cosmetic differences don't count.
+- **List filters live in the URL** (`listFilters.ts`): status/type/company go to the API, "not final"/fit/search are filtered in the browser. Defaults are left out of the URL.
+- **Dialogs** use the native `<dialog>` via `components/Dialog.tsx` (showModal, Esc via `cancel`, Tab wraps, focus returns to the opener). Route changes scroll to the top and focus `<main>` (Layout).
+- **Every page** has loading, empty and error states (`QueryStates.tsx`); colour is never the only signal (badges have text); fields are labelled and errors linked with `aria-describedby`.
+- **Tests** mock the API client with `mockApi()` (`vi.spyOn(api, …)`); `setup.ts` makes any real `fetch` fail, fixes TZ to UTC and stands in for `<dialog>` methods jsdom lacks.
 
 ### Status flow
 
@@ -183,18 +203,21 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - Daily-workflow helpers: `make import` (newest file from ~/Downloads), `make applied URL=… [DATE=…]` (lookup via new `?job_url=` filter on `GET /applications`, then the normal status endpoint). Import now updates `saved` → `applied` for applied items and reports `updated`
 - History-order fix: `get_status_history()` always queries `ORDER BY changed_at, id`; backdating moves the saved row back; naive input datetimes are read as UTC
 - CORS from settings + `GET /meta/status-transitions`
-- Frontend phase 1: Vite scaffold, Tailwind, ESLint/Prettier, Vitest; typed API client with types generated from OpenAPI; React Router layout with navigation and placeholder pages
-- Tests: backend 74 (pytest), frontend 15 (Vitest)
+- Frontend phase 1: Vite scaffold, Tailwind, ESLint/Prettier, Vitest; typed API client with types generated from OpenAPI; React Router layout with navigation
+- Frontend app (branch `frontend-app`, 2026-10-25): applications list (home, URL filters, fit badges, sorting, phone layout), application detail (edit with PATCH of changed fields, status buttons from `/meta/status-transitions` with note/date dialog, Mark applied, history timeline, delete), import page (preview, result, per-job 422 messages), add application (inline company creation, duplicate-URL link), companies page (counts, edit, explained RESTRICT deletes), dashboard (stat tiles + accessible funnel chart, no chart library)
+- Frontend Dockerfile (Node build → nginx-unprivileged) and `web` compose service; CI frontend job
+- Checked end to end in headless Chrome against a throwaway database (`jobtrail_dev_check`, since dropped) and in an isolated compose project
+- Tests: backend 74 (pytest), frontend 84 (Vitest)
 
 **Not done yet** (don't claim these)
-- Frontend phases 2–5: applications table/forms/detail page with status buttons, dashboard with charts, import and companies pages, more frontend tests, frontend Dockerfile + compose service, frontend CI job
-- No API for contacts / application_contacts (the tables exist, no endpoints)
+- No API or UI for contacts / application_contacts (the tables exist, no endpoints)
 - No auth, no deployment (AWS/Terraform), no pagination
-- The CORS default only covers the Vite dev server
+- The frontend image isn't built or published by CI (only checked locally); `VITE_API_URL` is baked in at build time
+- No dark mode; no "needs attention" list (applications with no change for 14+ days)
 
 **Next**
-- Frontend phase 2: applications (table with filters and search, add form, detail page with PATCH, status buttons from /meta/status-transitions, history timeline)
-- Then phases 3–5 (dashboard, import + companies, tests + Docker + CI), then Terraform on AWS
+- Merge `frontend-app` into `main` and push; watch the first CI run with the frontend job
+- Then Terraform on AWS
 
 **Roadmap**
 - Terraform on AWS (VPC, ECS Fargate, RDS, ECR), CD on merge, GitHub OIDC (no long-lived keys), users/auth before deploying
@@ -210,7 +233,8 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
   - `app.dependency_overrides[get_db]` swaps in the test session
 - One-time setup: `docker compose exec db createdb -U jobtrail jobtrail_test`
 - Tests share one session per test, so cached objects survive between requests. To test what a fresh request sees, call `db_session.expire_all()`.
-- Frontend tests (Vitest + Testing Library, jsdom) mock `fetch`; `src/test/render.tsx` wraps components in the query client and a MemoryRouter.
+- Frontend tests (Vitest + Testing Library, jsdom) mock the API client with `mockApi()`; `src/test/render.tsx` renders a page at a route (`route`, `path`) with the query client and a MemoryRouter, and exposes the current URL as `getByTestId("location")`.
+- Manual or browser checks must never touch the real `jobtrail` database: use a throwaway database (e.g. `createdb jobtrail_dev_check`, run the API with `DATABASE_URL=…/jobtrail_dev_check` on a spare port) or an isolated compose project (`docker compose -p jobtrail-smoke …`, then `down -v`).
 - Before committing: `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`; in `frontend/`: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`
 
 ## Known gotchas
@@ -222,4 +246,7 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - The repo lives in iCloud-synced `~/Desktop`. When the disk fills up, macOS evicts file contents (`ls -lO` shows `dataless`) and imports, pytest and Docker hang. Free space, then read the files once to download them.
 - `~/.npm` contained root-owned files (EACCES on `npm install`). Fix once with `sudo chown -R 501:20 ~/.npm`.
 - `openapi-typescript` 7 declares a TypeScript 5 peer, so `gen:api` runs it through `npx` instead of installing it next to TypeScript 6.
-- Headless Chrome on this Mac renders pages but exits slowly; run it in the background with a separate `--user-data-dir`.
+- Headless Chrome on this Mac renders pages but exits slowly; run it in the background with a separate `--user-data-dir`. For clicking through flows, `playwright-core` driving the installed Chrome (`executablePath`) works without downloading a browser.
+- jsdom (29) has no `HTMLDialogElement.showModal()/close()`; `src/test/setup.ts` adds a small stand-in. Real browsers are covered by the Chrome checks.
+- openapi-typescript treats fields with a default as required, so `ApplicationCreate.level` / `employment_type` must always be sent.
+- Building the compose stack under another project name still tags `jobtrail-frontend:latest`. An image built with a test `VITE_API_URL` would then be reused by a plain `docker compose up`; remove it or use `--build`.
