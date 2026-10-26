@@ -284,6 +284,7 @@ function LoadedApplication({ application }: { application: Application }) {
               <StatusActions
                 application={application}
                 allowed={transitions.data[application.status]}
+                latestChange={history.data?.at(-1)?.changed_at ?? null}
                 onChanged={setMessage}
               />
             )}

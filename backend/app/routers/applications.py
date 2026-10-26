@@ -18,6 +18,7 @@ from app.schemas import (
 )
 from app.services import (
     InvalidTransitionError,
+    StatusChangeTooEarlyError,
     change_status,
     get_status_history,
     import_applications,
@@ -27,6 +28,15 @@ from app.services import (
 router = APIRouter(prefix="/applications", tags=["applications"])
 
 DUPLICATE_JOB_URL = "An application with this job_url already exists"
+
+
+def field_error(field: str, error_type: str, message: str) -> HTTPException:
+    """A 422 in the same shape as FastAPI's own validation errors, for rules that need the
+    database (so Pydantic can't check them). Clients read it like any other field error."""
+    return HTTPException(
+        422,
+        detail=[{"type": error_type, "loc": ["body", field], "msg": message}],
+    )
 
 
 def get_application_or_404(db: DbSession, application_id: int) -> Application:
@@ -125,6 +135,8 @@ def update_status(application_id: int, payload: StatusChangeCreate, db: DbSessio
         change = change_status(application, payload.to_status, payload.changed_at, payload.note)
     except InvalidTransitionError as exc:
         raise HTTPException(http.HTTP_409_CONFLICT, str(exc)) from None
+    except StatusChangeTooEarlyError as exc:
+        raise field_error("changed_at", "status_change_too_early", str(exc)) from None
     db.commit()
     db.refresh(change)
     return change

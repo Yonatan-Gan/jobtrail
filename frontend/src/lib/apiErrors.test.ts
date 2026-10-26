@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../api/client";
 import { validationError } from "../test/mockApi";
 import { formErrors } from "./apiErrors";
-import { dateInputToIso } from "./dates";
 import { DuplicateJobUrlError } from "./duplicateJobUrl";
 
 describe("formErrors", () => {
@@ -34,11 +33,5 @@ describe("formErrors", () => {
     expect(formErrors(new DuplicateJobUrlError(3)).fields.job_url).toBe(
       "Another application already has this job URL.",
     );
-  });
-});
-
-describe("dateInputToIso", () => {
-  it("uses noon local time on the chosen day (UTC in the tests)", () => {
-    expect(dateInputToIso("2026-10-17")).toBe("2026-10-17T12:00:00.000Z");
   });
 });

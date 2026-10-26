@@ -66,3 +66,11 @@ export function formErrors(error: unknown): FormErrors {
 }
 
 export const NO_ERRORS: FormErrors = { fields: {}, form: null };
+
+/** All of an error's messages as one sentence, for places without form fields. */
+export function errorMessage(error: unknown): string {
+  const { fields, form } = formErrors(error);
+  return [...Object.values(fields), form]
+    .filter((message): message is string => message !== null)
+    .join(" ");
+}

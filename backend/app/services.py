@@ -18,6 +18,18 @@ class InvalidTransitionError(Exception):
         super().__init__(f"Cannot move from '{current}' to '{new}'")
 
 
+class StatusChangeTooEarlyError(Exception):
+    """A status change dated before the application's latest one: the history would be
+    out of order."""
+
+    def __init__(self, latest: StatusChange) -> None:
+        when = latest.changed_at.astimezone(UTC)
+        super().__init__(
+            "This change can't be dated before the latest status change "
+            f"({latest.to_status} on {when:%Y-%m-%d} at {when:%H:%M} UTC)."
+        )
+
+
 def new_application(fields: dict[str, Any], saved_at: datetime | None = None) -> Application:
     """Build an application in status 'saved' with its first history row (None -> saved)."""
     application = Application(**fields, status=Status.SAVED)
@@ -56,6 +68,7 @@ def change_status(
         raise InvalidTransitionError(application.status, new_status)
 
     when = assume_utc(changed_at) if changed_at else datetime.now(UTC)
+    check_not_before_latest(application, new_status, when)
     change = StatusChange(
         from_status=application.status,
         to_status=new_status,
@@ -69,6 +82,27 @@ def change_status(
             application.applied_at = when
         move_saved_row_back(application, when)
     return change
+
+
+def check_not_before_latest(application: Application, new_status: Status, when: datetime) -> None:
+    """A new change can't be dated before the latest one, so the history stays in order.
+
+    The one exception: applying earlier than the job was added to JobTrail. The "saved"
+    row only records when the job entered JobTrail, so move_saved_row_back() moves it
+    back instead.
+
+    max() doesn't depend on the list's order, and the relationship also holds rows that
+    are not in the database yet (during an import), so this reads it directly.
+    """
+    dated = [row for row in application.status_changes if row.changed_at is not None]
+    # max() keeps the first of equal values, so reversed() lets ties go to the row added
+    # last: after a backdated "applied", the saved row has the same time as the applied row.
+    latest = max(reversed(dated), key=lambda row: row.changed_at, default=None)
+    if latest is None or when >= latest.changed_at:
+        return
+    if new_status == Status.APPLIED and latest.to_status == Status.SAVED:
+        return
+    raise StatusChangeTooEarlyError(latest)
 
 
 def move_saved_row_back(application: Application, applied_at: datetime) -> None:

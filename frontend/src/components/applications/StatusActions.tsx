@@ -1,11 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { describeError } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { useRefreshApplications } from "../../api/queries";
 import type { Application, Status } from "../../api/types";
-import { dateInputToIso } from "../../lib/dates";
-import { enumLabel } from "../../lib/format";
+import { errorMessage, formErrors, NO_ERRORS } from "../../lib/apiErrors";
+import { changedAtForDay } from "../../lib/dates";
+import { enumLabel, formatDate } from "../../lib/format";
 import { Button } from "../Button";
 import { Dialog } from "../Dialog";
 import { TextAreaField, TextField } from "../FormFields";
@@ -15,6 +15,8 @@ interface StatusActionsProps {
   application: Application;
   /** The next statuses GET /meta/status-transitions allows from the current one. */
   allowed: Status[];
+  /** When the latest status change happened (the last history row), if known. */
+  latestChange: string | null;
   onChanged: (message: string) => void;
 }
 
@@ -23,6 +25,7 @@ interface StatusActionsProps {
 export function StatusActions({
   application,
   allowed,
+  latestChange,
   onChanged,
 }: StatusActionsProps) {
   const [target, setTarget] = useState<Status | null>(null);
@@ -60,7 +63,7 @@ export function StatusActions({
       )}
       {markApplied.isError && (
         <Notice tone="error">
-          Could not mark as applied: {describeError(markApplied.error)}
+          Could not mark as applied: {errorMessage(markApplied.error)}
         </Notice>
       )}
       <ul className="flex flex-wrap gap-2" aria-label="Move to another status">
@@ -82,6 +85,7 @@ export function StatusActions({
           <StatusChangeForm
             applicationId={application.id}
             target={target}
+            latestChange={latestChange}
             onCancel={() => setTarget(null)}
             onDone={() => {
               setTarget(null);
@@ -109,6 +113,7 @@ function statusButtonLabel(status: Status, current: Status): string {
 interface StatusChangeFormProps {
   applicationId: number;
   target: Status;
+  latestChange: string | null;
   onCancel: () => void;
   onDone: () => void;
 }
@@ -116,6 +121,7 @@ interface StatusChangeFormProps {
 function StatusChangeForm({
   applicationId,
   target,
+  latestChange,
   onCancel,
   onDone,
 }: StatusChangeFormProps) {
@@ -128,13 +134,15 @@ function StatusChangeForm({
       api.changeStatus(applicationId, {
         to_status: target,
         note: note.trim() || null,
-        changed_at: date ? dateInputToIso(date) : null,
+        changed_at: date ? changedAtForDay(date, latestChange) : null,
       }),
     onSuccess: async () => {
       await refresh();
       onDone();
     },
   });
+  // A 422 says which field is wrong, for example a date before the latest change.
+  const errors = change.error ? formErrors(change.error) : NO_ERRORS;
 
   return (
     <form
@@ -149,6 +157,7 @@ function StatusChangeForm({
         rows={3}
         value={note}
         onChange={(event) => setNote(event.target.value)}
+        error={errors.fields.note}
         data-autofocus
       />
       <TextField
@@ -156,11 +165,16 @@ function StatusChangeForm({
         type="date"
         value={date}
         onChange={(event) => setDate(event.target.value)}
-        hint="Leave empty to use the current time. Pick an earlier day to backdate the change."
+        error={errors.fields.changed_at}
+        hint={
+          latestChange
+            ? `Leave empty to use the current time, or pick the day it happened. The latest change was on ${formatDate(latestChange)}.`
+            : "Leave empty to use the current time, or pick the day it happened."
+        }
       />
       {change.isError && (
         <Notice tone="error">
-          The change was not saved. {describeError(change.error)}
+          The change was not saved.{errors.form ? ` ${errors.form}` : ""}
         </Notice>
       )}
       <div className="flex justify-end gap-2">

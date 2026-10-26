@@ -169,6 +169,47 @@ describe("ApplicationDetailPage", () => {
     );
   });
 
+  it("shows a too-early date's 422 next to the date field", async () => {
+    const { user } = setup({ ...saved, status: "applied" });
+    const message =
+      "This change can't be dated before the latest status change (applied on 2026-10-20 at 09:00 UTC).";
+    vi.spyOn(api, "changeStatus").mockRejectedValue(
+      validationError({ loc: ["body", "changed_at"], msg: message }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Screening…" }));
+    const dialog = screen.getByRole("dialog", { name: "Move to Screening" });
+    const date = within(dialog).getByLabelText("Date (optional)");
+    fireEvent.change(date, { target: { value: "2026-10-19" } });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Move to Screening" }),
+    );
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "The change was not saved.",
+    );
+    expect(date).toHaveAttribute("aria-invalid", "true");
+    expect(date).toHaveAccessibleDescription(expect.stringContaining(message));
+  });
+
+  it("explains why 'Mark applied now' was refused", async () => {
+    const { user } = setup(saved);
+    vi.spyOn(api, "changeStatus").mockRejectedValue(
+      validationError({
+        loc: ["body", "changed_at"],
+        msg: "This change can't be dated before the latest status change (saved on 2026-10-27 at 09:00 UTC).",
+      }),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Mark applied now" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not mark as applied: This change can't be dated before the latest status change",
+    );
+  });
+
   it("explains that a final status allows no more changes", async () => {
     setup({ ...saved, status: "rejected" });
     expect(

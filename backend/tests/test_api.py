@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import services
 from app.enums import Status
-from app.models import Application
+from app.models import Application, StatusChange
 from app.services import InvalidTransitionError
 
 
@@ -429,18 +429,32 @@ def test_saved_row_is_kept_when_applied_after_saving(client: TestClient) -> None
 def test_history_is_ordered_by_time_not_by_insertion(
     client: TestClient, db_session: Session
 ) -> None:
+    """The API refuses out-of-order changes now, but histories saved before that rule can
+    still be out of order. The history endpoint must return them in time order anyway."""
     company = make_company(client)
     app_id = make_application(client, company["id"])["id"]
     # Keep the application in the session cache, as earlier code in the same session would.
     # Without this, garbage collection decides whether the cache survives: a flaky test.
     cached = db_session.get(Application, app_id)
-    status_url = f"/applications/{app_id}/status"
+    assert cached is not None
     now = datetime.now(UTC)
-    # "screening" is recorded last, but dated an hour before "applied".
-    for status, hours in [("applied", 2), ("screening", 1)]:
-        changed_at = (now + timedelta(hours=hours)).isoformat()
-        response = client.post(status_url, json={"to_status": status, "changed_at": changed_at})
-        assert response.status_code == 201
+    # Written straight to the database, like old data: "screening" is added last, but
+    # dated an hour before "applied".
+    cached.status_changes.append(
+        StatusChange(
+            from_status=Status.SAVED,
+            to_status=Status.APPLIED,
+            changed_at=now + timedelta(hours=2),
+        )
+    )
+    cached.status_changes.append(
+        StatusChange(
+            from_status=Status.APPLIED,
+            to_status=Status.SCREENING,
+            changed_at=now + timedelta(hours=1),
+        )
+    )
+    db_session.flush()
 
     # The trap: the cached list is in insertion order...
     assert [row.to_status for row in cached.status_changes] == ["saved", "applied", "screening"]
@@ -449,6 +463,59 @@ def test_history_is_ordered_by_time_not_by_insertion(
     assert [status for status, _ in timeline(client, app_id)] == expected
     db_session.expire_all()
     assert [status for status, _ in timeline(client, app_id)] == expected
+
+
+def test_status_change_cannot_be_dated_before_the_latest_change(
+    client: TestClient, db_session: Session
+) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    status_url = f"/applications/{app_id}/status"
+    applied_at = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
+    response = client.post(
+        status_url, json={"to_status": "applied", "changed_at": applied_at.isoformat()}
+    )
+    assert response.status_code == 201
+
+    the_day_before = (applied_at - timedelta(days=1)).isoformat()
+    response = client.post(
+        status_url, json={"to_status": "screening", "changed_at": the_day_before}
+    )
+
+    assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert error["loc"] == ["body", "changed_at"]
+    assert error["msg"] == (
+        "This change can't be dated before the latest status change "
+        "(applied on 2026-10-20 at 09:00 UTC)."
+    )
+    db_session.expire_all()
+    assert client.get(f"/applications/{app_id}").json()["status"] == "applied"
+    assert [status for status, _ in timeline(client, app_id)] == ["saved", "applied"]
+
+
+def test_status_change_at_the_same_time_as_the_latest_is_allowed(client: TestClient) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    status_url = f"/applications/{app_id}/status"
+    when = datetime(2026, 10, 20, 9, 0, tzinfo=UTC).isoformat()
+    for status in ["applied", "screening"]:
+        response = client.post(status_url, json={"to_status": status, "changed_at": when})
+        assert response.status_code == 201
+
+
+def test_only_applied_may_be_dated_before_the_saved_row(client: TestClient) -> None:
+    """Backdating "applied" moves the saved row back. Other moves from saved don't."""
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+
+    response = client.post(
+        f"/applications/{app_id}/status",
+        json={"to_status": "withdrawn", "changed_at": "2026-01-01T09:00:00Z"},
+    )
+
+    assert response.status_code == 422
+    assert "(saved on " in response.json()["detail"][0]["msg"]
 
 
 def test_import_applied_item_moves_saved_row_back(client: TestClient) -> None:
