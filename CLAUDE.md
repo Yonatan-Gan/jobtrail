@@ -152,7 +152,8 @@ Five tables. `applications` stores the **current state**; `status_changes` store
 - **`job_url` is unique.** A duplicate returns 409 on create and PATCH, and is skipped (not an error) on import, which makes re-importing a file safe. The one exception: an import item with status `applied` moves an existing application that is still `saved` to applied (via `change_status`) and is reported as `updated`.
 - **Read history with `get_status_history()`** (explicit `ORDER BY changed_at, id`), never by returning `application.status_changes`: within one session that list keeps insertion order, so the order would depend on the session cache.
 - **Status changes can't be dated before the latest one** (`check_not_before_latest` in services.py): the API answers 422 with `loc ["body", "changed_at"]`, so the history stays in order. Ties go to the row added last.
-- **Backdating:** the one exception: moving to `applied` with a time earlier than the `saved` row moves the saved row back to that time, so history never shows applied before saved.
+- **Status changes can't be dated in the future:** more than `FUTURE_TOLERANCE` (5 minutes, for clock differences) ahead of the server's clock is a Pydantic 422 (`NotFutureUtcDatetime` in schemas.py) on `changed_at`, or on `applied_at` for import items (`loc ["body", N, "applied_at"]`). `make applied DATE=…` gets the same error.
+- **Backdating:** the one exception to "not before the latest change": moving to `applied` with a time earlier than the `saved` row moves the saved row back to that time, so history never shows applied before saved.
 - **Rules that need the database** answer 422 in FastAPI's own shape via `field_error()` in routers/applications.py, so the frontend shows them next to the field like any validation error.
 - **Salary range:** `salary_min <= salary_max` is a Pydantic `field_validator` on `salary_max` (create and PATCH, 422 on `salary_max`, message "salary_min must be less than or equal to salary_max"). A PATCH with only one salary is compared with the stored other one in the router (422 on the field that was sent). The DB CHECK stays as the last line of defence.
 - **Input datetimes without a time zone are read as UTC** (`UtcDatetime` in schemas.py). Postgres runs in UTC, and aware datetimes can be compared safely.
@@ -211,7 +212,8 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - Frontend Dockerfile (Node build → nginx-unprivileged) and `web` compose service; CI frontend job
 - Checked end to end in headless Chrome against a throwaway database (`jobtrail_dev_check`, since dropped) and in an isolated compose project
 - Validation fixes (branch `fix/status-dates-and-salary`): status changes can't be dated before the latest one (422 on `changed_at`, shown next to the date in the status dialog; the dialog turns "today" into now and never goes before the latest change on the same day), and a clear field-level 422 for `salary_min > salary_max` on create and PATCH
-- Tests: backend 81 (pytest), frontend 92 (Vitest)
+- Future dates refused (branch `fix/no-future-status-dates`): 422 for a status change or import `applied_at` more than 5 minutes ahead, shown next to the date in the status dialog and printed by `make applied`
+- Tests: backend 85 (pytest), frontend 93 (Vitest)
 
 **Not done yet** (don't claim these)
 - No API or UI for contacts / application_contacts (the tables exist, no endpoints)

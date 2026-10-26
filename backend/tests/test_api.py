@@ -338,9 +338,8 @@ def test_applied_item_updates_saved_application(client: TestClient) -> None:
     url = "https://jobs.example/1"
     import_items(client, [import_item(url)])
 
-    # Applied after it was saved. A fixed past date would sort "applied" before "saved"
-    # in the database, while the session cache keeps insertion order: a flaky test.
-    applied_at = datetime.now(UTC) + timedelta(hours=1)
+    # Applied after it was saved: now (a date in the future would be refused).
+    applied_at = datetime.now(UTC)
     applied = import_item(url, status="applied", applied_at=applied_at.isoformat())
     result = import_items(client, [applied])
     assert result == {
@@ -452,7 +451,9 @@ def test_saved_row_is_kept_when_applied_after_saving(client: TestClient) -> None
     company = make_company(client)
     app_id = make_application(client, company["id"])["id"]
     [(_, saved_at)] = timeline(client, app_id)
-    applied_at = saved_at + timedelta(hours=1)
+    # Later than the saved row, but not in the future (that would be refused).
+    applied_at = datetime.now(UTC)
+    assert applied_at > saved_at
 
     response = client.post(
         f"/applications/{app_id}/status",
@@ -553,6 +554,61 @@ def test_only_applied_may_be_dated_before_the_saved_row(client: TestClient) -> N
 
     assert response.status_code == 422
     assert "(saved on " in response.json()["detail"][0]["msg"]
+
+
+def test_status_change_dated_in_the_future_is_rejected(
+    client: TestClient, db_session: Session
+) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    future = datetime.now(UTC) + timedelta(days=3)
+
+    response = client.post(
+        f"/applications/{app_id}/status",
+        json={"to_status": "applied", "changed_at": future.isoformat()},
+    )
+
+    assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert error["loc"] == ["body", "changed_at"]
+    assert error["msg"] == (
+        "A status change can't be dated in the future "
+        f"({future:%Y-%m-%d %H:%M} UTC is later than now)."
+    )
+    db_session.expire_all()
+    assert client.get(f"/applications/{app_id}").json()["status"] == "saved"
+
+
+@pytest.mark.parametrize(("minutes_ahead", "status_code"), [(2, 201), (10, 422)])
+def test_a_few_minutes_ahead_is_allowed_for_clock_differences(
+    client: TestClient, minutes_ahead: int, status_code: int
+) -> None:
+    company = make_company(client)
+    app_id = make_application(client, company["id"])["id"]
+    changed_at = datetime.now(UTC) + timedelta(minutes=minutes_ahead)
+
+    response = client.post(
+        f"/applications/{app_id}/status",
+        json={"to_status": "applied", "changed_at": changed_at.isoformat()},
+    )
+
+    assert response.status_code == status_code
+
+
+def test_import_rejects_an_applied_at_in_the_future(client: TestClient) -> None:
+    future = datetime.now(UTC) + timedelta(days=1)
+    items = [
+        import_item("https://jobs.example/1"),
+        import_item("https://jobs.example/2", status="applied", applied_at=future.isoformat()),
+    ]
+
+    response = client.post("/applications/import", json=items)
+
+    assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert error["loc"] == ["body", 1, "applied_at"]
+    assert "can't be dated in the future" in error["msg"]
+    assert client.get("/applications").json() == []
 
 
 def test_import_applied_item_moves_saved_row_back(client: TestClient) -> None:

@@ -169,28 +169,44 @@ describe("ApplicationDetailPage", () => {
     );
   });
 
-  it("shows a too-early date's 422 next to the date field", async () => {
-    const { user } = setup({ ...saved, status: "applied" });
-    const message =
-      "This change can't be dated before the latest status change (applied on 2026-10-20 at 09:00 UTC).";
-    vi.spyOn(api, "changeStatus").mockRejectedValue(
-      validationError({ loc: ["body", "changed_at"], msg: message }),
-    );
+  it.each([
+    [
+      "before the latest change",
+      "2026-10-19",
+      "This change can't be dated before the latest status change (applied on 2026-10-20 at 09:00 UTC).",
+    ],
+    [
+      "in the future",
+      "2099-12-01",
+      "A status change can't be dated in the future (2099-12-01 12:00 UTC is later than now).",
+    ],
+  ])(
+    "shows the API's 422 for a date %s next to the date field",
+    async (_, day, message) => {
+      const { user } = setup({ ...saved, status: "applied" });
+      vi.spyOn(api, "changeStatus").mockRejectedValue(
+        validationError({ loc: ["body", "changed_at"], msg: message }),
+      );
 
-    await user.click(await screen.findByRole("button", { name: "Screening…" }));
-    const dialog = screen.getByRole("dialog", { name: "Move to Screening" });
-    const date = within(dialog).getByLabelText("Date (optional)");
-    fireEvent.change(date, { target: { value: "2026-10-19" } });
-    await user.click(
-      within(dialog).getByRole("button", { name: "Move to Screening" }),
-    );
+      await user.click(
+        await screen.findByRole("button", { name: "Screening…" }),
+      );
+      const dialog = screen.getByRole("dialog", { name: "Move to Screening" });
+      const date = within(dialog).getByLabelText("Date (optional)");
+      fireEvent.change(date, { target: { value: day } });
+      await user.click(
+        within(dialog).getByRole("button", { name: "Move to Screening" }),
+      );
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "The change was not saved.",
-    );
-    expect(date).toHaveAttribute("aria-invalid", "true");
-    expect(date).toHaveAccessibleDescription(expect.stringContaining(message));
-  });
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        "The change was not saved.",
+      );
+      expect(date).toHaveAttribute("aria-invalid", "true");
+      expect(date).toHaveAccessibleDescription(
+        expect.stringContaining(message),
+      );
+    },
+  );
 
   it("explains why 'Mark applied now' was refused", async () => {
     const { user } = setup(saved);

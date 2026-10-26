@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -23,6 +23,26 @@ def assume_utc(value: datetime) -> datetime:
 # An input datetime that is always timezone-aware. Postgres runs in UTC, so a value
 # without an offset was already stored as UTC; this makes Python agree with it.
 UtcDatetime = Annotated[datetime, AfterValidator(assume_utc)]
+
+# How far ahead of the server's clock a status change may be dated, for a client whose
+# clock runs a little fast.
+FUTURE_TOLERANCE = timedelta(minutes=5)
+
+
+def not_in_the_future(value: datetime) -> datetime:
+    """A status change records something that already happened, so a future date is refused."""
+    if value > datetime.now(UTC) + FUTURE_TOLERANCE:
+        raise PydanticCustomError(
+            "datetime_in_future",
+            "A status change can't be dated in the future ({when} UTC is later than now).",
+            {"when": f"{value.astimezone(UTC):%Y-%m-%d %H:%M}"},
+        )
+    return value
+
+
+# The date of a status change (changed_at, applied_at): timezone-aware and not in the
+# future. The validators run in order, so the comparison always has a time zone.
+NotFutureUtcDatetime = Annotated[UtcDatetime, AfterValidator(not_in_the_future)]
 
 SALARY_RANGE_MESSAGE = "salary_min must be less than or equal to salary_max"
 
@@ -135,7 +155,7 @@ class ApplicationRead(BaseModel):
 
 class StatusChangeCreate(BaseModel):
     to_status: Status
-    changed_at: UtcDatetime | None = None
+    changed_at: NotFutureUtcDatetime | None = None
     note: str | None = None
 
 
@@ -162,7 +182,7 @@ class ApplicationImportItem(BaseModel):
     skills: list[str] = Field(default_factory=list)
     notes: str | None = None
     status: Literal[Status.SAVED, Status.APPLIED] = Status.SAVED
-    applied_at: UtcDatetime | None = None
+    applied_at: NotFutureUtcDatetime | None = None
 
     @model_validator(mode="after")
     def check_applied_at(self) -> Self:

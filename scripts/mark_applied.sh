@@ -57,7 +57,11 @@ http_code="$(curl --silent --show-error --max-time 10 \
     --data-binary "$payload")"
 
 if [[ "$http_code" != "201" ]]; then
-    echo "Could not mark \"$title\" (application $id) as applied. Its status is '$current_status'." >&2
+    echo "Could not mark \"$title\" (application $id) as applied." >&2
+    # Only a refused move (409) is about the status; a 422 is about the date.
+    if [[ "$http_code" == "409" ]]; then
+        echo "Its status is '$current_status'." >&2
+    fi
     print_api_error "$response_file" >&2
     exit 1
 fi
