@@ -23,10 +23,10 @@ The screenshots use obviously fake sample data.
 
 - **Companies and applications:** create, read, update and delete, with filters by status, company and position type
 - **Status flow with rules:** `saved → applied → screening → assignment → technical → final → offer`, plus `rejected`, `withdrawn`, `ghosted`, `accepted` and `declined`. Moves that aren't allowed (e.g. `applied → offer`) are rejected with `409 Conflict`
-- **Full history:** every status change is stored with a timestamp and an optional note
+- **Full history:** every status change is stored with a timestamp and an optional note. A change can't be dated before the latest one (`422`), so the history stays in order. The one exception: applying earlier than the job was added moves the "saved" step back
 - **Stats:** response rate, average days to first response and a funnel by stage, all computed from the status history
 - **Bulk import:** load job listings from a JSON file in one all-or-nothing request. Re-importing the same file is safe, because `job_url` is unique
-- **Validation:** request data is checked by Pydantic (`422`), and the database enforces unique company names, foreign keys and a salary-range check
+- **Validation:** request data is checked by Pydantic (`422`, with the field that's wrong, e.g. `salary_max` for "salary_min must be less than or equal to salary_max"), and the database enforces unique company names, foreign keys and a salary-range check
 
 The web app covers the whole daily routine:
 

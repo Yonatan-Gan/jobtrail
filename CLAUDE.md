@@ -151,7 +151,10 @@ Five tables. `applications` stores the **current state**; `status_changes` store
 - **Service functions never commit.** They change objects in the session; the endpoint commits once, so one request is one transaction. The bulk import relies on this to be all-or-nothing.
 - **`job_url` is unique.** A duplicate returns 409 on create and PATCH, and is skipped (not an error) on import, which makes re-importing a file safe. The one exception: an import item with status `applied` moves an existing application that is still `saved` to applied (via `change_status`) and is reported as `updated`.
 - **Read history with `get_status_history()`** (explicit `ORDER BY changed_at, id`), never by returning `application.status_changes`: within one session that list keeps insertion order, so the order would depend on the session cache.
-- **Backdating:** moving to `applied` with a time earlier than the `saved` row moves the saved row back to that time, so history never shows applied before saved.
+- **Status changes can't be dated before the latest one** (`check_not_before_latest` in services.py): the API answers 422 with `loc ["body", "changed_at"]`, so the history stays in order. Ties go to the row added last.
+- **Backdating:** the one exception: moving to `applied` with a time earlier than the `saved` row moves the saved row back to that time, so history never shows applied before saved.
+- **Rules that need the database** answer 422 in FastAPI's own shape via `field_error()` in routers/applications.py, so the frontend shows them next to the field like any validation error.
+- **Salary range:** `salary_min <= salary_max` is a Pydantic `field_validator` on `salary_max` (create and PATCH, 422 on `salary_max`, message "salary_min must be less than or equal to salary_max"). A PATCH with only one salary is compared with the stored other one in the router (422 on the field that was sent). The DB CHECK stays as the last line of defence.
 - **Input datetimes without a time zone are read as UTC** (`UtcDatetime` in schemas.py). Postgres runs in UTC, and aware datetimes can be compared safely.
 - **CORS** origins come from settings (`CORS_ORIGINS`), never hard-coded. Status rules reach the frontend through `GET /meta/status-transitions`; the frontend must not copy them.
 
@@ -207,7 +210,8 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - Frontend app (branch `frontend-app`, 2026-10-25): applications list (home, URL filters, fit badges, sorting, phone layout), application detail (edit with PATCH of changed fields, status buttons from `/meta/status-transitions` with note/date dialog, Mark applied, history timeline, delete), import page (preview, result, per-job 422 messages), add application (inline company creation, duplicate-URL link), companies page (counts, edit, explained RESTRICT deletes), dashboard (stat tiles + accessible funnel chart, no chart library)
 - Frontend Dockerfile (Node build → nginx-unprivileged) and `web` compose service; CI frontend job
 - Checked end to end in headless Chrome against a throwaway database (`jobtrail_dev_check`, since dropped) and in an isolated compose project
-- Tests: backend 74 (pytest), frontend 84 (Vitest)
+- Validation fixes (branch `fix/status-dates-and-salary`): status changes can't be dated before the latest one (422 on `changed_at`, shown next to the date in the status dialog; the dialog turns "today" into now and never goes before the latest change on the same day), and a clear field-level 422 for `salary_min > salary_max` on create and PATCH
+- Tests: backend 81 (pytest), frontend 92 (Vitest)
 
 **Not done yet** (don't claim these)
 - No API or UI for contacts / application_contacts (the tables exist, no endpoints)
@@ -220,6 +224,8 @@ Endings: `rejected`, `withdrawn`, `ghosted`, `accepted`, `declined`.
 - Then Terraform on AWS
 
 **Roadmap**
+- nginx reverse proxy: serve the API under `/api` from the `web` container and build the frontend with `VITE_API_URL=/api`. One frontend image then works in every environment (no API address baked in) and the browser sees one origin, so CORS is no longer needed
+- Publish the frontend image from CI to GHCR (like the backend image), once it no longer depends on the API address
 - Terraform on AWS (VPC, ECS Fargate, RDS, ECR), CD on merge, GitHub OIDC (no long-lived keys), users/auth before deploying
 - Later: Kubernetes (kind/k3s locally), Prometheus/Grafana, Trivy + Dependabot
 
