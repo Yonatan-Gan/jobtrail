@@ -272,6 +272,31 @@ describe("ApplicationDetailPage", () => {
     );
   });
 
+  it("shows the salary range error next to the salary field", async () => {
+    const { user } = setup(saved);
+    vi.spyOn(api, "updateApplication").mockRejectedValue(
+      validationError({
+        loc: ["body", "salary_min"],
+        msg: "salary_min must be less than or equal to salary_max",
+      }),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Edit details" }),
+    );
+    const salaryFrom = screen.getByLabelText("Salary from (NIS / month)");
+    await user.clear(salaryFrom);
+    await user.type(salaryFrom, "25000");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await vi.waitFor(() =>
+      expect(salaryFrom).toHaveAttribute("aria-invalid", "true"),
+    );
+    expect(salaryFrom).toHaveAccessibleDescription(
+      "salary_min must be less than or equal to salary_max",
+    );
+  });
+
   it("links to the application that already has the job URL", async () => {
     const { spies, user } = setup(saved);
     vi.spyOn(api, "updateApplication").mockRejectedValue(

@@ -131,12 +131,12 @@ describe("NewApplicationPage", () => {
     ).toHaveAttribute("href", "/applications/7");
   });
 
-  it("shows a 422 that isn't about one field as a message for the form", async () => {
+  it("shows the salary range error next to the salary field", async () => {
     const { user } = setup();
     vi.spyOn(api, "createApplication").mockRejectedValue(
       validationError({
-        loc: ["body"],
-        msg: "Value error, salary_min must be less than or equal to salary_max",
+        loc: ["body", "salary_max"],
+        msg: "salary_min must be less than or equal to salary_max",
       }),
     );
 
@@ -145,9 +145,21 @@ describe("NewApplicationPage", () => {
       "Acme Robotics",
     );
     await fillRequiredFields(user);
+    await user.type(
+      screen.getByLabelText("Salary from (NIS / month)"),
+      "20000",
+    );
+    await user.type(
+      screen.getByLabelText("Salary up to (NIS / month)"),
+      "10000",
+    );
     await user.click(screen.getByRole("button", { name: "Add application" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
+    const salaryUpTo = screen.getByLabelText("Salary up to (NIS / month)");
+    await vi.waitFor(() =>
+      expect(salaryUpTo).toHaveAttribute("aria-invalid", "true"),
+    );
+    expect(salaryUpTo).toHaveAccessibleDescription(
       "salary_min must be less than or equal to salary_max",
     );
   });

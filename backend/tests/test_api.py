@@ -112,6 +112,43 @@ def test_invalid_salary_range_returns_422(client: TestClient) -> None:
         },
     )
     assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert error["loc"] == ["body", "salary_max"]
+    assert error["msg"] == "salary_min must be less than or equal to salary_max"
+
+
+@pytest.mark.parametrize(
+    ("patch", "field"),
+    [
+        ({"salary_min": 20000, "salary_max": 10000}, "salary_max"),
+        ({"salary_max": 10000}, "salary_max"),
+        ({"salary_min": 16000}, "salary_min"),
+    ],
+)
+def test_patch_salary_range_is_checked_with_the_stored_salary(
+    client: TestClient, patch: dict, field: str
+) -> None:
+    company = make_company(client)
+    application = make_application(client, company["id"], salary_min=12000, salary_max=15000)
+
+    response = client.patch(f"/applications/{application['id']}", json=patch)
+
+    assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert error["loc"] == ["body", field]
+    assert error["msg"] == "salary_min must be less than or equal to salary_max"
+    unchanged = client.get(f"/applications/{application['id']}").json()
+    assert (unchanged["salary_min"], unchanged["salary_max"]) == (12000, 15000)
+
+
+def test_patch_with_a_valid_salary_range_still_works(client: TestClient) -> None:
+    company = make_company(client)
+    application = make_application(client, company["id"], salary_min=12000, salary_max=15000)
+
+    response = client.patch(f"/applications/{application['id']}", json={"salary_max": 18000})
+
+    assert response.status_code == 200
+    assert (response.json()["salary_min"], response.json()["salary_max"]) == (12000, 18000)
 
 
 def test_cannot_delete_company_with_applications(client: TestClient) -> None:

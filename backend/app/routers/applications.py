@@ -8,6 +8,7 @@ from app.db import DbSession
 from app.enums import PositionType, Status
 from app.models import Application, Company, StatusChange
 from app.schemas import (
+    SALARY_RANGE_MESSAGE,
     ApplicationCreate,
     ApplicationImportItem,
     ApplicationRead,
@@ -15,6 +16,7 @@ from app.schemas import (
     ImportResult,
     StatusChangeCreate,
     StatusChangeRead,
+    salary_range_ok,
 )
 from app.services import (
     InvalidTransitionError,
@@ -104,7 +106,15 @@ def update_application(
     application_id: int, payload: ApplicationUpdate, db: DbSession
 ) -> Application:
     application = get_application_or_404(db, application_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    # The schema checks the salary range when the PATCH sends both salaries. When it sends
+    # one, compare it with the stored other one, so the answer is the same clear 422.
+    salary_min = changes.get("salary_min", application.salary_min)
+    salary_max = changes.get("salary_max", application.salary_max)
+    if not salary_range_ok(salary_min, salary_max):
+        field = "salary_max" if "salary_max" in changes else "salary_min"
+        raise field_error(field, "salary_range", SALARY_RANGE_MESSAGE)
+    for field, value in changes.items():
         setattr(application, field, value)
     try:
         db.commit()
@@ -112,7 +122,9 @@ def update_application(
         db.rollback()
         if isinstance(exc.orig, UniqueViolation):
             raise HTTPException(http.HTTP_409_CONFLICT, DUPLICATE_JOB_URL) from None
-        raise HTTPException(422, "Invalid update: check company_id and salary range") from None
+        raise HTTPException(
+            422, "Invalid update: check that the company exists and required fields aren't empty"
+        ) from None
     db.refresh(application)
     return application
 

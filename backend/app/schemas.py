@@ -1,7 +1,16 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from app.enums import EmploymentType, Level, PositionType, Source, Status, WorkMode
 
@@ -14,6 +23,25 @@ def assume_utc(value: datetime) -> datetime:
 # An input datetime that is always timezone-aware. Postgres runs in UTC, so a value
 # without an offset was already stored as UTC; this makes Python agree with it.
 UtcDatetime = Annotated[datetime, AfterValidator(assume_utc)]
+
+SALARY_RANGE_MESSAGE = "salary_min must be less than or equal to salary_max"
+
+
+def salary_range_ok(salary_min: int | None, salary_max: int | None) -> bool:
+    """A range is fine unless both ends are known and the minimum is above the maximum."""
+    return salary_min is None or salary_max is None or salary_min <= salary_max
+
+
+def check_salary_max(salary_max: int | None, info: ValidationInfo) -> int | None:
+    """Compare salary_max with salary_min, which Pydantic has validated just before it.
+
+    The error belongs to the salary_max field, so the 422's loc is ["body", "salary_max"]
+    and clients can show it next to that field. PydanticCustomError keeps the message
+    exactly as written (a ValueError would get a "Value error, " prefix).
+    """
+    if not salary_range_ok(info.data.get("salary_min"), salary_max):
+        raise PydanticCustomError("salary_range", SALARY_RANGE_MESSAGE)
+    return salary_max
 
 
 class CompanyCreate(BaseModel):
@@ -53,15 +81,10 @@ class ApplicationCreate(BaseModel):
     skills: list[str] = Field(default_factory=list)
     notes: str | None = None
 
-    @model_validator(mode="after")
-    def check_salary_range(self) -> Self:
-        if (
-            self.salary_min is not None
-            and self.salary_max is not None
-            and self.salary_min > self.salary_max
-        ):
-            raise ValueError("salary_min must be less than or equal to salary_max")
-        return self
+    @field_validator("salary_max")
+    @classmethod
+    def check_salary_range(cls, salary_max: int | None, info: ValidationInfo) -> int | None:
+        return check_salary_max(salary_max, info)
 
 
 class ApplicationUpdate(BaseModel):
@@ -78,6 +101,13 @@ class ApplicationUpdate(BaseModel):
     source: Source | None = None
     skills: list[str] | None = None
     notes: str | None = None
+
+    # Only sees both salaries when the PATCH sends both. The router compares a single one
+    # with the stored value.
+    @field_validator("salary_max")
+    @classmethod
+    def check_salary_range(cls, salary_max: int | None, info: ValidationInfo) -> int | None:
+        return check_salary_max(salary_max, info)
 
 
 class ApplicationRead(BaseModel):
